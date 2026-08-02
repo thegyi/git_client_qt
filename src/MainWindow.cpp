@@ -89,10 +89,10 @@ MainWindow::MainWindow(QWidget *parent)
   });
 
   m_commitTable = new QTableWidget(this);
-  m_commitTable->setColumnCount(5);
-  m_commitTable->setHorizontalHeaderLabels({tr("Date"), tr("Commit Message"),
-                                            tr("Author"), tr("Branches"),
-                                            tr("SHA")});
+  m_commitTable->setColumnCount(6);
+  m_commitTable->setHorizontalHeaderLabels({tr("Graph"), tr("Date"),
+                                            tr("Commit Message"), tr("Author"),
+                                            tr("Branches"), tr("SHA")});
   m_commitTable->horizontalHeader()->setVisible(false);
   m_commitTable->setSelectionBehavior(QAbstractItemView::SelectRows);
   m_commitTable->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -100,6 +100,7 @@ MainWindow::MainWindow(QWidget *parent)
   m_commitTable->verticalHeader()->setVisible(false);
   m_commitTable->horizontalHeader()->setSectionResizeMode(
       QHeaderView::ResizeToContents);
+  m_commitTable->setShowGrid(false);
   m_commitTable->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
   m_commitTable->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
   connect(m_commitTable, &QTableWidget::itemClicked, this,
@@ -366,19 +367,18 @@ void MainWindow::loadRepository(const QString &path) {
 
   m_commitTable->clear();
   m_commitTable->setRowCount(0);
-  m_commitTable->setHorizontalHeaderLabels({tr("Date"), tr("Commit Message"),
-                                            tr("Author"), tr("Branches"),
-                                            tr("SHA")});
+  m_commitTable->setHorizontalHeaderLabels({tr("Graph"), tr("Date"),
+                                            tr("Commit Message"), tr("Author"),
+                                            tr("Branches"), tr("SHA")});
   m_commitTable->horizontalHeader()->setVisible(true);
 
   QProcess p;
-  p.start(
-      "git",
-      QStringList{"-C", path} +
-          QStringList{
-              "log", "--all", "--source", "--date-order",
-              "--date=format:%Y-%m-%d %H:%M:%S",
-              "--pretty=format:%H%x1f%h%x1f%an%x1f%ad%x1f%s%x1f%b%x1f%S%x1e"});
+  p.start("git",
+          QStringList{"-C", path} +
+              QStringList{"log", "--all", "--graph", "--source", "--date-order",
+                          "--date=format:%Y-%m-%d %H:%M:%S",
+                          "--pretty=format:%x1f%H%x1f%h%x1f%an%x1f%ad%x1f%s%"
+                          "x1f%b%x1f%S%x1e"});
   if (p.waitForFinished(10000) && p.exitCode() == 0) {
     const QString output =
         QString::fromLocal8Bit(p.readAllStandardOutput().trimmed());
@@ -405,20 +405,21 @@ void MainWindow::loadRepository(const QString &path) {
          output.split(QChar(0x1e), Qt::SkipEmptyParts)) {
       const QStringList fields =
           record.trimmed().split(QChar(0x1f), Qt::KeepEmptyParts);
-      if (fields.size() < 7) {
+      if (fields.size() < 8) {
         continue;
       }
 
-      const QString fullSha = fields.at(0);
-      const QString shortSha = fields.at(1);
-      const QString author = fields.at(2);
-      const QString date = fields.at(3);
-      QString subject = fields.at(4);
+      const QString graph = fields.at(0);
+      const QString fullSha = fields.at(1);
+      const QString shortSha = fields.at(2);
+      const QString author = fields.at(3);
+      const QString date = fields.at(4);
+      QString subject = fields.at(5);
       subject.remove("[skip ci]", Qt::CaseInsensitive);
       subject = subject.trimmed();
-      const QString body = fields.at(5).trimmed();
+      const QString body = fields.at(6).trimmed();
 
-      QString branchName = fields.at(6);
+      QString branchName = fields.at(7);
       if (branchName.startsWith("refs/heads/")) {
         branchName = branchName.mid(11);
       } else if (branchName.startsWith("refs/remotes/")) {
@@ -461,36 +462,46 @@ void MainWindow::loadRepository(const QString &path) {
       const int row = m_commitTable->rowCount();
       m_commitTable->insertRow(row);
 
+      auto *graphItem = new QTableWidgetItem(graph);
+      graphItem->setToolTip(tip);
+      QFont graphFont;
+      graphFont.setStyleHint(QFont::Monospace);
+      graphFont.setFamily("Monospace");
+      graphItem->setFont(graphFont);
+      if (bgBrush != QBrush())
+        graphItem->setBackground(bgBrush);
+      m_commitTable->setItem(row, 0, graphItem);
+
       auto *dateItem = new QTableWidgetItem(date);
       dateItem->setToolTip(tip);
       if (bgBrush != QBrush())
         dateItem->setBackground(bgBrush);
-      m_commitTable->setItem(row, 0, dateItem);
+      m_commitTable->setItem(row, 1, dateItem);
 
       auto *msgItem = new QTableWidgetItem(preview);
       msgItem->setToolTip(tip);
       if (bgBrush != QBrush())
         msgItem->setBackground(bgBrush);
-      m_commitTable->setItem(row, 1, msgItem);
+      m_commitTable->setItem(row, 2, msgItem);
 
       auto *authorItem = new QTableWidgetItem(author);
       authorItem->setToolTip(tip);
       if (bgBrush != QBrush())
         authorItem->setBackground(bgBrush);
-      m_commitTable->setItem(row, 2, authorItem);
+      m_commitTable->setItem(row, 3, authorItem);
 
       auto *branchItem = new QTableWidgetItem(branchName);
       branchItem->setToolTip(tip);
       if (bgBrush != QBrush())
         branchItem->setBackground(bgBrush);
-      m_commitTable->setItem(row, 3, branchItem);
+      m_commitTable->setItem(row, 4, branchItem);
 
       auto *shaItem = new QTableWidgetItem(shortSha);
       shaItem->setData(Qt::UserRole, fullSha);
       shaItem->setToolTip(tip);
       if (bgBrush != QBrush())
         shaItem->setBackground(bgBrush);
-      m_commitTable->setItem(row, 4, shaItem);
+      m_commitTable->setItem(row, 5, shaItem);
     }
   }
   m_commitTable->resizeColumnsToContents();
@@ -652,10 +663,10 @@ void MainWindow::onTagClicked(QTreeWidgetItem *item, int column) {
   }
 
   for (int row = 0; row < m_commitTable->rowCount(); ++row) {
-    QTableWidgetItem *shaItem = m_commitTable->item(row, 4);
+    QTableWidgetItem *shaItem = m_commitTable->item(row, 5);
     if (shaItem && shaItem->data(Qt::UserRole).toString() == sha) {
       m_commitTable->selectRow(row);
-      QTableWidgetItem *msgItem = m_commitTable->item(row, 1);
+      QTableWidgetItem *msgItem = m_commitTable->item(row, 2);
       if (msgItem) {
         m_commitTable->setCurrentItem(msgItem);
         m_commitTable->scrollToItem(msgItem, QAbstractItemView::EnsureVisible);
@@ -983,7 +994,7 @@ void MainWindow::onCommitSelected(QTableWidgetItem *item) {
     m_diffView->clear();
 
   const int row = item->row();
-  QTableWidgetItem *shaItem = m_commitTable->item(row, 4);
+  QTableWidgetItem *shaItem = m_commitTable->item(row, 5);
   if (!shaItem)
     return;
 
