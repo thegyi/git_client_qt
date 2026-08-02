@@ -105,6 +105,9 @@ MainWindow::MainWindow(QWidget *parent)
   m_commitTable->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
   connect(m_commitTable, &QTableWidget::itemClicked, this,
           &MainWindow::onCommitSelected);
+  m_commitTable->setContextMenuPolicy(Qt::CustomContextMenu);
+  connect(m_commitTable, &QTableWidget::customContextMenuRequested, this,
+          &MainWindow::showCommitContextMenu);
   setCentralWidget(m_commitTable);
 
   m_repoPanel = new QTreeWidget(this);
@@ -119,6 +122,9 @@ MainWindow::MainWindow(QWidget *parent)
             QTreeWidgetItem *item = m_repoPanel->itemAt(pos);
             if (item && m_stashesItem && item->parent() == m_stashesItem) {
               showStashContextMenu(pos);
+            } else if (item && m_tagsItem &&
+                       (item == m_tagsItem || item->parent() == m_tagsItem)) {
+              showTagContextMenu(pos);
             } else {
               showBranchContextMenu(pos);
             }
@@ -732,6 +738,48 @@ void MainWindow::onBranchClicked(QTreeWidgetItem *item, int column) {
   }
 }
 
+void MainWindow::showTagContextMenu(const QPoint &pos) {
+  QTreeWidgetItem *item = m_repoPanel->itemAt(pos);
+  if (!item || !m_tagsItem)
+    return;
+
+  QMenu menu(this);
+  if (item == m_tagsItem) {
+    auto *createAction = menu.addAction(tr("Create Tag at HEAD"));
+    if (menu.exec(m_repoPanel->viewport()->mapToGlobal(pos)) == createAction) {
+      bool ok;
+      const QString tagName =
+          QInputDialog::getText(this, tr("Create Tag"), tr("Tag name:"),
+                                QLineEdit::Normal, QString(), &ok);
+      if (ok && !tagName.isEmpty()) {
+        if (tagName.contains(QLatin1Char(' '))) {
+          QMessageBox::warning(this, tr("Invalid tag name"),
+                               tr("Tag names cannot contain spaces."));
+        } else {
+          QString output;
+          if (execGit(m_currentPath, {"tag", tagName}, &output)) {
+            loadRepository(m_currentPath);
+            statusBar()->showMessage(tr("Tag %1 created").arg(tagName));
+          } else {
+            QMessageBox::warning(this, tr("Create tag failed"), output);
+          }
+        }
+      }
+    }
+  } else if (item->parent() == m_tagsItem) {
+    const QString tagName = item->text(0);
+    auto *deleteAction = menu.addAction(tr("Delete Tag %1").arg(tagName));
+    if (menu.exec(m_repoPanel->viewport()->mapToGlobal(pos)) == deleteAction) {
+      if (execGit(m_currentPath, {"tag", "-d", tagName})) {
+        loadRepository(m_currentPath);
+        statusBar()->showMessage(tr("Tag %1 deleted").arg(tagName));
+      } else {
+        statusBar()->showMessage(tr("Failed to delete tag %1").arg(tagName));
+      }
+    }
+  }
+}
+
 void MainWindow::onTagClicked(QTreeWidgetItem *item, int column) {
   Q_UNUSED(column)
   qDebug() << "onTagClicked: item=" << item << "m_tagsItem=" << m_tagsItem;
@@ -1072,6 +1120,46 @@ void MainWindow::showStagedContextMenu(const QPoint &pos) {
     if (execGit(m_currentPath, {"reset", "HEAD", "--", path})) {
       loadWorkingTree();
     }
+  }
+}
+
+void MainWindow::showCommitContextMenu(const QPoint &pos) {
+  QTableWidgetItem *item = m_commitTable->itemAt(pos);
+  if (!item || m_currentPath.isEmpty())
+    return;
+
+  const int row = item->row();
+  QTableWidgetItem *shaItem = m_commitTable->item(row, 5);
+  if (!shaItem)
+    return;
+  const QString sha = shaItem->data(Qt::UserRole).toString();
+  if (sha.isEmpty())
+    return;
+
+  QMenu menu(this);
+  auto *createTagAction = menu.addAction(tr("Create Tag for this Commit"));
+  if (menu.exec(m_commitTable->viewport()->mapToGlobal(pos)) != createTagAction)
+    return;
+
+  bool ok;
+  const QString tagName =
+      QInputDialog::getText(this, tr("Create Tag"), tr("Tag name:"),
+                            QLineEdit::Normal, QString(), &ok);
+  if (!ok || tagName.isEmpty())
+    return;
+
+  if (tagName.contains(QLatin1Char(' '))) {
+    QMessageBox::warning(this, tr("Invalid tag name"),
+                         tr("Tag names cannot contain spaces."));
+    return;
+  }
+
+  QString output;
+  if (execGit(m_currentPath, {"tag", tagName, sha}, &output)) {
+    loadRepository(m_currentPath);
+    statusBar()->showMessage(tr("Tag %1 created").arg(tagName));
+  } else {
+    QMessageBox::warning(this, tr("Create tag failed"), output);
   }
 }
 
