@@ -115,7 +115,14 @@ MainWindow::MainWindow(QWidget *parent)
   m_repoPanel->setMinimumWidth(80);
   m_repoPanel->setContextMenuPolicy(Qt::CustomContextMenu);
   connect(m_repoPanel, &QTreeWidget::customContextMenuRequested, this,
-          &MainWindow::showBranchContextMenu);
+          [this](const QPoint &pos) {
+            QTreeWidgetItem *item = m_repoPanel->itemAt(pos);
+            if (item && m_stashesItem && item->parent() == m_stashesItem) {
+              showStashContextMenu(pos);
+            } else {
+              showBranchContextMenu(pos);
+            }
+          });
   connect(m_repoPanel, &QTreeWidget::itemClicked, this,
           &MainWindow::onTagClicked);
   connect(m_repoPanel, &QTreeWidget::itemClicked, this,
@@ -291,6 +298,7 @@ void MainWindow::loadRepository(const QString &path) {
     return;
   }
 
+  const bool isInitialLoad = m_currentPath.isEmpty();
   m_currentPath = path;
   setWindowTitle(QFileInfo(path).fileName() + " - " + tr("Git Client Qt"));
   if (m_pushButton)
@@ -519,7 +527,8 @@ void MainWindow::loadRepository(const QString &path) {
     resizeDocks({m_repoDock, m_workTreeDock}, {leftWidth, rightWidth},
                 Qt::Horizontal);
   }
-  resize(leftWidth + tableWidth + rightWidth, height());
+  if (isInitialLoad)
+    resize(leftWidth + tableWidth + rightWidth, height());
   qDebug() << "loadRepository: loaded" << m_commitTable->rowCount()
            << "commits";
   updateFilter();
@@ -655,6 +664,37 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
         statusBar()->showMessage(
             tr("Failed to delete remote branch %1").arg(fullBranchName));
       }
+    }
+  }
+}
+
+void MainWindow::showStashContextMenu(const QPoint &pos) {
+  QTreeWidgetItem *item = m_repoPanel->itemAt(pos);
+  if (!item || !m_stashesItem || item->parent() != m_stashesItem)
+    return;
+
+  const QString ref = item->data(0, Qt::UserRole).toString();
+  if (ref.isEmpty())
+    return;
+
+  QMenu menu(this);
+  auto *applyAction = menu.addAction(tr("Apply Stash"));
+  auto *deleteAction = menu.addAction(tr("Delete Stash"));
+  QAction *selected = menu.exec(m_repoPanel->viewport()->mapToGlobal(pos));
+
+  if (selected == applyAction) {
+    if (execGit(m_currentPath, {"stash", "apply", ref})) {
+      loadWorkingTree();
+      statusBar()->showMessage(tr("Stash applied"));
+    } else {
+      statusBar()->showMessage(tr("Failed to apply stash"));
+    }
+  } else if (selected == deleteAction) {
+    if (execGit(m_currentPath, {"stash", "drop", ref})) {
+      loadStashes();
+      statusBar()->showMessage(tr("Stash deleted"));
+    } else {
+      statusBar()->showMessage(tr("Failed to delete stash"));
     }
   }
 }

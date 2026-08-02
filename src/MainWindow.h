@@ -32,6 +32,7 @@ public:
 
 private slots:
   void showBranchContextMenu(const QPoint &pos);
+  void showStashContextMenu(const QPoint &pos);
   void showUnstagedContextMenu(const QPoint &pos);
   void showStagedContextMenu(const QPoint &pos);
   void onTagClicked(QTreeWidgetItem *item, int column);
