@@ -56,6 +56,7 @@ private:
   void onCommitSelected(QTableWidgetItem *item);
   void onCommitFileClicked(QTreeWidgetItem *item, int column);
   void onStashClicked(QTreeWidgetItem *item, int column);
+  void onBranchClicked(QTreeWidgetItem *item, int column);
 
   Ui::MainWindow *ui;
   QTreeWidget *m_repoPanel = nullptr;

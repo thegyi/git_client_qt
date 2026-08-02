@@ -120,6 +120,8 @@ MainWindow::MainWindow(QWidget *parent)
           &MainWindow::onTagClicked);
   connect(m_repoPanel, &QTreeWidget::itemClicked, this,
           &MainWindow::onStashClicked);
+  connect(m_repoPanel, &QTreeWidget::itemClicked, this,
+          &MainWindow::onBranchClicked);
 
   auto *dock = new QDockWidget(QStringLiteral("Repository"), this);
   dock->setTitleBarWidget(new QWidget(dock));
@@ -531,7 +533,21 @@ bool MainWindow::execGit(const QString &path, const QStringList &args,
                          QString *output) const {
   QProcess p;
   p.start("git", QStringList{"-C", path} + args);
-  p.waitForFinished(10000);
+  if (!p.waitForStarted(5000)) {
+    if (output)
+      *output = tr("Failed to start git: %1").arg(p.errorString());
+    return false;
+  }
+  if (!p.waitForFinished(30000)) {
+    p.kill();
+    p.waitForFinished(1000);
+    if (output) {
+      *output = tr("Git command timed out or was killed.\n%1")
+                    .arg(QString::fromLocal8Bit(p.readAllStandardOutput() +
+                                                p.readAllStandardError()));
+    }
+    return false;
+  }
   if (output)
     *output = QString::fromLocal8Bit(p.readAllStandardOutput() +
                                      p.readAllStandardError());
@@ -639,6 +655,39 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
         statusBar()->showMessage(
             tr("Failed to delete remote branch %1").arg(fullBranchName));
       }
+    }
+  }
+}
+
+void MainWindow::onBranchClicked(QTreeWidgetItem *item, int column) {
+  Q_UNUSED(column)
+  if (!item)
+    return;
+
+  QString branch;
+  if (m_localBranchesItem && item->parent() == m_localBranchesItem) {
+    branch = item->text(0);
+  } else if (m_remoteBranchesItem && item->parent() &&
+             item->parent()->parent() == m_remoteBranchesItem) {
+    branch = item->parent()->text(0) + "/" + item->text(0);
+  } else {
+    return;
+  }
+
+  const QString sha = runGit(m_currentPath, {"rev-parse", branch}).value(0);
+  if (sha.isEmpty())
+    return;
+
+  for (int row = 0; row < m_commitTable->rowCount(); ++row) {
+    QTableWidgetItem *shaItem = m_commitTable->item(row, 5);
+    if (shaItem && shaItem->data(Qt::UserRole).toString() == sha) {
+      m_commitTable->selectRow(row);
+      QTableWidgetItem *msgItem = m_commitTable->item(row, 2);
+      if (msgItem) {
+        m_commitTable->setCurrentItem(msgItem);
+        m_commitTable->scrollToItem(msgItem, QAbstractItemView::EnsureVisible);
+      }
+      break;
     }
   }
 }
