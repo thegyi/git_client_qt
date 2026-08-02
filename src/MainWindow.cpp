@@ -195,6 +195,9 @@ MainWindow::MainWindow(QWidget *parent)
 
     QProcess p;
     p.setWorkingDirectory(m_currentPath);
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert(QStringLiteral("GIT_EDITOR"), QStringLiteral("true"));
+    p.setProcessEnvironment(env);
 
     QString output;
     bool canceled = false;
