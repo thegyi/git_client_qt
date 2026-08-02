@@ -37,6 +37,7 @@
 #include <QTableWidgetItem>
 #include <QTemporaryDir>
 #include <QTextStream>
+#include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
@@ -258,7 +259,8 @@ MainWindow::MainWindow(QWidget *parent)
       return;
     }
     if (p.exitStatus() == QProcess::NormalExit && p.exitCode() == 0) {
-      loadRepository(m_currentPath);
+      QTimer::singleShot(100, this,
+                         [this]() { loadRepository(m_currentPath); });
       statusBar()->showMessage(m_pullArgs.first() == QLatin1String("fetch")
                                    ? tr("Fetched")
                                    : tr("Pulled"));
