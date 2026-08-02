@@ -20,12 +20,14 @@
 #include <QGroupBox>
 #include <QHeaderView>
 #include <QInputDialog>
+#include <QKeySequence>
 #include <QLineEdit>
 #include <QMap>
 #include <QMenu>
 #include <QMessageBox>
 #include <QProcess>
 #include <QSettings>
+#include <QShortcut>
 #include <QStyle>
 #include <QTableWidget>
 #include <QTableWidgetItem>
@@ -60,16 +62,23 @@ MainWindow::MainWindow(QWidget *parent)
   m_recentMenu = new QMenu(tr("Recent Repositories"), this);
   ui->menuFile->insertMenu(ui->actionClose, m_recentMenu);
 
+  ui->actionOpen->setShortcut(QKeySequence::Open);
+  ui->actionClose->setShortcut(QKeySequence::Close);
+  ui->actionExit->setShortcut(QKeySequence::Quit);
+  ui->actionPreferences->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Comma));
+
   m_branchLabel = new QLabel(this);
   statusBar()->addPermanentWidget(m_branchLabel);
 
   auto *actionClone = new QAction(tr("Clone Repository"), this);
   ui->menuFile->insertAction(ui->actionOpen, actionClone);
+  actionClone->setShortcut(QKeySequence(QLatin1String("Ctrl+Shift+N")));
   connect(actionClone, &QAction::triggered, this,
           &MainWindow::onCloneRepository);
 
   auto *actionInit = new QAction(tr("Initialize Repository"), this);
   ui->menuFile->insertAction(ui->actionExit, actionInit);
+  actionInit->setShortcut(QKeySequence(QLatin1String("Ctrl+N")));
   connect(actionInit, &QAction::triggered, this, &MainWindow::onInitRepository);
 
   auto *filterBar = addToolBar(tr("Filter"));
@@ -87,10 +96,12 @@ MainWindow::MainWindow(QWidget *parent)
   m_pushButton->setIcon(
       QApplication::style()->standardIcon(QStyle::SP_ArrowUp));
   m_pushButton->setEnabled(false);
+  m_pushButton->setShortcut(QKeySequence(QLatin1String("Ctrl+Shift+P")));
   m_pullButton = new QToolButton(this);
   m_pullButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
   m_pullButton->setPopupMode(QToolButton::MenuButtonPopup);
   m_pullButton->setEnabled(false);
+  m_pullButton->setShortcut(QKeySequence(QLatin1String("Ctrl+Shift+L")));
   remoteBar->addWidget(m_pushButton);
   remoteBar->addWidget(m_pullButton);
 
@@ -102,6 +113,7 @@ MainWindow::MainWindow(QWidget *parent)
   auto *ffOnly = pullMenu->addAction(tr("Pull (fast-forward only)"));
   auto *rebase = pullMenu->addAction(tr("Pull (rebase)"));
   auto *fetchAll = pullMenu->addAction(tr("Fetch all"));
+  fetchAll->setShortcut(QKeySequence(QLatin1String("Ctrl+Shift+F")));
   auto *actionGroup = new QActionGroup(this);
   actionGroup->setExclusive(true);
   for (auto *action : {ffIfPossible, ffOnly, rebase, fetchAll}) {
@@ -279,6 +291,7 @@ MainWindow::MainWindow(QWidget *parent)
   messageLayout->addWidget(m_amendCheckBox);
   m_commitButton = new QPushButton(tr("Commit"), this);
   m_commitButton->setEnabled(false);
+  m_commitButton->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Return));
   messageLayout->addWidget(m_commitButton);
   rightLayout->addWidget(messageGroup);
 
@@ -379,6 +392,12 @@ MainWindow::MainWindow(QWidget *parent)
 
   restoreSettings();
   loadRepository(m_currentPath);
+
+  auto *reloadShortcut = new QShortcut(QKeySequence(Qt::Key_F5), this);
+  connect(reloadShortcut, &QShortcut::activated, this, [this] {
+    if (!m_currentPath.isEmpty())
+      loadRepository(m_currentPath);
+  });
 }
 
 MainWindow::~MainWindow() { delete ui; }
