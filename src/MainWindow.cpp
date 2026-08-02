@@ -706,9 +706,21 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
                                 remotes, 0, false, &okRemote);
       if (!okRemote || remote.isEmpty())
         return;
-      if (execGit(m_currentPath, {"push", "-u", remote, branchName})) {
+
+      bool okDest;
+      const QString destBranch = QInputDialog::getText(
+          this, tr("Push to Branch"), tr("Remote branch name:"),
+          QLineEdit::Normal, branchName, &okDest);
+      if (!okDest || destBranch.isEmpty())
+        return;
+
+      const QString ref = (destBranch == branchName)
+                              ? branchName
+                              : branchName + ":" + destBranch;
+      if (execGit(m_currentPath, {"push", "-u", remote, ref})) {
         loadRepository(m_currentPath);
-        statusBar()->showMessage(tr("Pushed %1 to %2").arg(branchName, remote));
+        statusBar()->showMessage(
+            tr("Pushed %1 to %2/%3").arg(branchName, remote, destBranch));
       } else {
         statusBar()->showMessage(tr("Failed to push %1").arg(branchName));
       }
