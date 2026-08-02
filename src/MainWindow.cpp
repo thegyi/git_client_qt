@@ -28,6 +28,13 @@
 #include <QTreeWidgetItem>
 
 #include <QGroupBox>
+#include <QHBoxLayout>
+#include <QIcon>
+#include <QLabel>
+#include <QPainter>
+#include <QPen>
+#include <QPixmap>
+#include <QPolygonF>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QRegularExpressionMatch>
@@ -387,6 +394,58 @@ void MainWindow::loadRepository(const QString &path) {
                                             tr("Commit Message"), tr("Author"),
                                             tr("Branches"), tr("SHA")});
   m_commitTable->horizontalHeader()->setVisible(true);
+
+  QMap<QString, int> wipCounts;
+  for (const QString &line : runGit(path, {"status", "--porcelain"})) {
+    if (line.length() < 2)
+      continue;
+    const QChar indexStatus = line.at(0);
+    const QChar workTreeStatus = line.at(1);
+    if (indexStatus == ' ' && workTreeStatus == ' ')
+      continue;
+    const QString status = (workTreeStatus != ' ') ? QString(workTreeStatus)
+                                                   : QString(indexStatus);
+    ++wipCounts[status];
+  }
+
+  if (!wipCounts.isEmpty()) {
+    m_commitTable->insertRow(0);
+
+    auto *wipGraphItem = new QTableWidgetItem(QStringLiteral("●"));
+    wipGraphItem->setTextAlignment(Qt::AlignCenter);
+    wipGraphItem->setForeground(QBrush(QColor(120, 120, 120)));
+    wipGraphItem->setFlags(wipGraphItem->flags() & ~Qt::ItemIsSelectable);
+    m_commitTable->setItem(0, 0, wipGraphItem);
+
+    auto *wipDateItem = new QTableWidgetItem();
+    wipDateItem->setFlags(wipDateItem->flags() & ~Qt::ItemIsSelectable);
+    m_commitTable->setItem(0, 1, wipDateItem);
+
+    auto *wipWidget = new QWidget(m_commitTable);
+    auto *wipLayout = new QHBoxLayout(wipWidget);
+    wipLayout->setContentsMargins(4, 2, 4, 2);
+    wipLayout->setSpacing(6);
+    const QStringList order = {"M", "A", "D", "R", "C", "T", "?"};
+    for (const QString &status : order) {
+      if (!wipCounts.contains(status))
+        continue;
+      auto *iconLabel = new QLabel(wipWidget);
+      iconLabel->setPixmap(statusIcon(status).pixmap(12, 12));
+      wipLayout->addWidget(iconLabel);
+      wipLayout->addWidget(
+          new QLabel(QString::number(wipCounts.value(status)), wipWidget));
+    }
+    wipLayout->addStretch();
+    m_commitTable->setCellWidget(0, 2, wipWidget);
+
+    auto *wipAuthorItem = new QTableWidgetItem();
+    wipAuthorItem->setFlags(wipAuthorItem->flags() & ~Qt::ItemIsSelectable);
+    m_commitTable->setItem(0, 3, wipAuthorItem);
+
+    auto *wipBranchesItem = new QTableWidgetItem();
+    wipBranchesItem->setFlags(wipBranchesItem->flags() & ~Qt::ItemIsSelectable);
+    m_commitTable->setItem(0, 4, wipBranchesItem);
+  }
 
   QProcess p;
   p.start("git",
@@ -833,14 +892,63 @@ void MainWindow::addFileToTree(QTreeWidget *tree, const QString &filePath,
     }
     if (!child) {
       child = new QTreeWidgetItem(parentItem, QStringList{dirName});
+      child->setIcon(0, statusIcon(QString()));
     }
     parentItem = child;
   }
   QTreeWidgetItem *leaf =
       new QTreeWidgetItem(parentItem, QStringList{fileName});
+  leaf->setIcon(0, statusIcon(status));
   if (!status.isEmpty()) {
     leaf->setData(0, Qt::UserRole, status);
   }
+}
+
+QIcon MainWindow::statusIcon(const QString &status) const {
+  if (status.isEmpty())
+    return QApplication::style()->standardIcon(QStyle::SP_DirIcon);
+
+  QPixmap pixmap(16, 16);
+  pixmap.fill(Qt::transparent);
+
+  QPainter painter(&pixmap);
+  painter.setRenderHint(QPainter::Antialiasing);
+
+  if (status == "?" || status == "A") {
+    QPen pen(QColor(40, 167, 69));
+    pen.setWidth(2);
+    pen.setCapStyle(Qt::RoundCap);
+    painter.setPen(pen);
+    painter.drawLine(8, 4, 8, 12);
+    painter.drawLine(4, 8, 12, 8);
+  } else if (status == "M") {
+    QPen pen(QColor(0, 123, 255));
+    pen.setWidth(2);
+    pen.setCapStyle(Qt::RoundCap);
+    painter.setPen(pen);
+    painter.drawLine(5, 13, 11, 5);
+    QPolygonF tip;
+    tip << QPointF(11, 5) << QPointF(12, 4) << QPointF(13, 5) << QPointF(12, 6);
+    painter.setBrush(QColor(0, 123, 255));
+    painter.setPen(Qt::NoPen);
+    painter.drawPolygon(tip);
+    QPolygonF eraser;
+    eraser << QPointF(5, 13) << QPointF(4, 14) << QPointF(5, 15)
+           << QPointF(6, 14);
+    painter.drawPolygon(eraser);
+  } else if (status == "D") {
+    QPen pen(QColor(220, 53, 69));
+    pen.setWidth(2);
+    pen.setCapStyle(Qt::RoundCap);
+    painter.setPen(pen);
+    painter.drawLine(4, 8, 12, 8);
+  } else {
+    painter.setBrush(QColor(160, 160, 160));
+    painter.setPen(Qt::NoPen);
+    painter.drawEllipse(pixmap.rect().adjusted(2, 2, -2, -2));
+  }
+
+  return QIcon(pixmap);
 }
 
 void MainWindow::loadWorkingTree() {
@@ -852,14 +960,19 @@ void MainWindow::loadWorkingTree() {
     return;
   }
 
-  for (const QString &filePath :
-       runGit(m_currentPath, {"diff", "--cached", "--name-only"})) {
-    addFileToTree(m_stagedTree, filePath, QString());
+  for (const QString &line :
+       runGit(m_currentPath, {"diff", "--cached", "--name-status"})) {
+    const QStringList parts = line.split('\t');
+    if (parts.isEmpty())
+      continue;
+    addFileToTree(m_stagedTree, parts.last(), parts.first().left(1));
   }
 
-  for (const QString &filePath :
-       runGit(m_currentPath, {"diff", "--name-only"})) {
-    addFileToTree(m_unstagedTree, filePath, QString());
+  for (const QString &line : runGit(m_currentPath, {"diff", "--name-status"})) {
+    const QStringList parts = line.split('\t');
+    if (parts.isEmpty())
+      continue;
+    addFileToTree(m_unstagedTree, parts.last(), parts.first().left(1));
   }
 
   for (const QString &filePath :

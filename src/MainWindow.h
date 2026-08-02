@@ -6,6 +6,7 @@
 #include <QStringList>
 
 class QPoint;
+class QIcon;
 class QPushButton;
 class QLineEdit;
 class QTextEdit;
@@ -47,6 +48,7 @@ private:
   void loadWorkingTree();
   void addFileToTree(QTreeWidget *tree, const QString &filePath,
                      const QString &status = QString());
+  QIcon statusIcon(const QString &status) const;
   QString itemPath(QTreeWidget *tree, QTreeWidgetItem *item) const;
   QString formatDiff(const QStringList &lines) const;
   QStringList runGit(const QString &path, const QStringList &args,
