@@ -36,6 +36,11 @@ add_executable(${PROJECT_NAME}
     ${RESOURCES}
 )
 
+if (MSVC)
+  target_compile_options(${PROJECT_NAME} PRIVATE
+      /FI"${CMAKE_CURRENT_SOURCE_DIR}/src/msvc_stdext_shim.h")
+endif()
+
 target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt${QT_VERSION_MAJOR}::Widgets
     Qt${QT_VERSION_MAJOR}::Network

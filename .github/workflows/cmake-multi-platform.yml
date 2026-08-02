@@ -59,8 +59,8 @@ jobs:
       id: install-qt
       uses: jurplel/install-qt-action@v4
       with:
-        version: '6.7.3'
-        arch: ${{ matrix.os == 'windows-latest' && 'win64_msvc2022_64' || 'gcc_64' }}
+        version: '6.5.3'
+        arch: ${{ matrix.os == 'windows-latest' && 'win64_msvc2019_64' || 'gcc_64' }}
 
     - name: Configure CMake
       # Configure CMake in a 'build' subdirectory. `CMAKE_BUILD_TYPE` is only required if you are using a single-configuration generator such as make.
