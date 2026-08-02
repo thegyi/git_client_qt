@@ -53,6 +53,7 @@ private slots:
   void onAmendToggled(int state);
   void showPreferences();
   void editGitignore();
+  void showRepositorySettings();
   void initSubmodules();
   void updateSubmodules();
   void addSubmodule();

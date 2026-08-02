@@ -85,6 +85,13 @@ MainWindow::MainWindow(QWidget *parent)
   connect(openSubmoduleAction, &QAction::triggered, this,
           &MainWindow::openSubmodule);
 
+  auto *repositoryMenu = new QMenu(tr("Repository"), this);
+  menuBar()->addMenu(repositoryMenu);
+  auto *repoSettingsAction = repositoryMenu->addAction(tr("Settings..."));
+  repoSettingsAction->setShortcut(QKeySequence(QLatin1String("Ctrl+,")));
+  connect(repoSettingsAction, &QAction::triggered, this,
+          &MainWindow::showRepositorySettings);
+
   ui->actionOpen->setShortcut(QKeySequence::Open);
   ui->actionClose->setShortcut(QKeySequence::Close);
   ui->actionExit->setShortcut(QKeySequence::Quit);
@@ -2532,4 +2539,62 @@ void MainWindow::openSubmodule() {
     return;
 
   loadRepository(m_currentPath + QLatin1Char('/') + path);
+}
+
+void MainWindow::showRepositorySettings() {
+  if (m_currentPath.isEmpty()) {
+    QMessageBox::warning(this, tr("No repository"),
+                         tr("Open a repository first."));
+    return;
+  }
+
+  QDialog dlg(this);
+  dlg.setWindowTitle(tr("Repository Settings"));
+  auto *layout = new QVBoxLayout(&dlg);
+  auto *form = new QFormLayout();
+
+  auto *nameEdit = new QLineEdit(&dlg);
+  auto *emailEdit = new QLineEdit(&dlg);
+  auto *branchEdit = new QLineEdit(&dlg);
+  auto *autocrlfCombo = new QComboBox(&dlg);
+  autocrlfCombo->setEditable(true);
+  autocrlfCombo->addItems({QString(), QStringLiteral("true"),
+                           QStringLiteral("false"), QStringLiteral("input")});
+
+  nameEdit->setText(runGit(m_currentPath, {"config", "user.name"}).value(0));
+  emailEdit->setText(runGit(m_currentPath, {"config", "user.email"}).value(0));
+  branchEdit->setText(
+      runGit(m_currentPath, {"config", "init.defaultBranch"}).value(0));
+  autocrlfCombo->setCurrentText(
+      runGit(m_currentPath, {"config", "core.autocrlf"}).value(0));
+
+  form->addRow(tr("User name:"), nameEdit);
+  form->addRow(tr("User email:"), emailEdit);
+  form->addRow(tr("Default branch:"), branchEdit);
+  form->addRow(tr("Auto CRLF:"), autocrlfCombo);
+  layout->addLayout(form);
+
+  auto *buttons = new QDialogButtonBox(
+      QDialogButtonBox::Save | QDialogButtonBox::Cancel, &dlg);
+  layout->addWidget(buttons);
+  connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+  if (dlg.exec() != QDialog::Accepted)
+    return;
+
+  auto setConfig = [this](const QString &key, const QString &value) {
+    if (value.isEmpty()) {
+      execGit(m_currentPath, {"config", "--local", "--unset", key});
+    } else {
+      execGit(m_currentPath, {"config", "--local", key, value});
+    }
+  };
+
+  setConfig(QStringLiteral("user.name"), nameEdit->text());
+  setConfig(QStringLiteral("user.email"), emailEdit->text());
+  setConfig(QStringLiteral("init.defaultBranch"), branchEdit->text());
+  setConfig(QStringLiteral("core.autocrlf"), autocrlfCombo->currentText());
+
+  statusBar()->showMessage(tr("Repository settings saved"));
 }
