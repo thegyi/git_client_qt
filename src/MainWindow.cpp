@@ -985,6 +985,10 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
     auto *renameAction = menu.addAction(tr("Rename"));
     const QString currentBranch =
         runGit(m_currentPath, {"rev-parse", "--abbrev-ref", "HEAD"}).value(0);
+    auto *mergeAction =
+        (branchName != currentBranch)
+            ? menu.addAction(tr("Merge %1 into current").arg(branchName))
+            : nullptr;
     auto *deleteAction =
         (branchName != currentBranch) ? menu.addAction(tr("Delete")) : nullptr;
     selected = menu.exec(m_repoPanel->viewport()->mapToGlobal(pos));
@@ -1083,6 +1087,19 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
         } else {
           statusBar()->showMessage(tr("Failed to rename %1").arg(branchName));
         }
+      }
+    } else if (selected == mergeAction) {
+      QString output;
+      if (execGit(m_currentPath,
+                  {"merge", "-m",
+                   tr("Merge branch %1 into %2").arg(branchName, currentBranch),
+                   branchName},
+                  &output)) {
+        loadRepository(m_currentPath);
+        statusBar()->showMessage(
+            tr("Merged %1 into %2").arg(branchName, currentBranch));
+      } else {
+        QMessageBox::warning(this, tr("Merge failed"), output);
       }
     } else if (selected == deleteAction) {
       if (execGit(m_currentPath, {"branch", "-d", branchName})) {
