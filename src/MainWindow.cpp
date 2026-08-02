@@ -178,6 +178,15 @@ MainWindow::MainWindow(QWidget *parent)
       return;
     QString output;
     if (execGit(m_currentPath, {"push"}, &output)) {
+      const QString currentBranch =
+          runGit(m_currentPath, {"rev-parse", "--abbrev-ref", "HEAD"}).value(0);
+      const QString remote =
+          runGit(
+              m_currentPath,
+              {"config", QStringLiteral("branch.%1.remote").arg(currentBranch)})
+              .value(0);
+      if (!remote.isEmpty() && !currentBranch.isEmpty())
+        execGit(m_currentPath, {"fetch", remote, currentBranch});
       loadRepository(m_currentPath);
       statusBar()->showMessage(tr("Pushed"));
     } else {
