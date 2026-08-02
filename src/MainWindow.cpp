@@ -201,9 +201,14 @@ MainWindow::MainWindow(QWidget *parent)
   auto *messageLayout = new QVBoxLayout(messageGroup);
   m_commitSubject = new QLineEdit(this);
   m_commitSubject->setPlaceholderText(tr("Short summary"));
+  m_commitSubject->setStyleSheet(QStringLiteral(
+      "QLineEdit { color: #000000; background-color: #ffffff; }"));
   messageLayout->addWidget(m_commitSubject);
   m_commitBody = new QTextEdit(this);
   m_commitBody->setPlaceholderText(tr("Long description"));
+  m_commitBody->setAcceptRichText(false);
+  m_commitBody->setStyleSheet(QStringLiteral(
+      "QTextEdit { color: #000000; background-color: #ffffff; }"));
   m_commitBody->setMaximumHeight(120);
   messageLayout->addWidget(m_commitBody);
   m_commitButton = new QPushButton(tr("Commit"), this);
