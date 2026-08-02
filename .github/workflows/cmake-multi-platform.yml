@@ -59,7 +59,7 @@ jobs:
       id: install-qt
       uses: jurplel/install-qt-action@v4
       with:
-        version: '6.5.3'
+        version: '6.7.3'
         arch: ${{ matrix.os == 'windows-latest' && 'win64_msvc2022_64' || 'gcc_64' }}
 
     - name: Configure CMake
