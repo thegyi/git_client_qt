@@ -77,6 +77,15 @@ jobs:
       # Build your program with the given configuration. Note that --config is needed because the default Windows generator is a multi-config generator (Visual Studio generator).
       run: cmake --build ${{ steps.strings.outputs.build-output-dir }} --config ${{ matrix.build_type }}
 
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: GitClientQt-${{ matrix.os }}-${{ matrix.c_compiler }}
+        path: |
+          build/GitClientQt
+          build/Release/GitClientQt.exe
+        if-no-files-found: ignore
+
     - name: Test
       working-directory: ${{ steps.strings.outputs.build-output-dir }}
       # Execute tests defined by the CMake configuration. Note that --build-config is needed because the default Windows generator is a multi-config generator (Visual Studio generator).
