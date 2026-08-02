@@ -8,11 +8,14 @@
 #include <QActionGroup>
 #include <QApplication>
 #include <QCheckBox>
+#include <QComboBox>
+#include <QDialogButtonBox>
 #include <QDockWidget>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFont>
+#include <QFormLayout>
 #include <QFrame>
 #include <QGroupBox>
 #include <QHeaderView>
@@ -22,6 +25,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QProcess>
+#include <QSettings>
 #include <QStyle>
 #include <QTableWidget>
 #include <QTableWidgetItem>
@@ -95,6 +99,10 @@ MainWindow::MainWindow(QWidget *parent)
     action->setCheckable(true);
     actionGroup->addAction(action);
   }
+  ffIfPossible->setData(QStringLiteral("ffIfPossible"));
+  ffOnly->setData(QStringLiteral("ffOnly"));
+  rebase->setData(QStringLiteral("rebase"));
+  fetchAll->setData(QStringLiteral("fetchAll"));
   ffIfPossible->setChecked(true);
   m_pullButton->setMenu(pullMenu);
   m_pullArgs.clear();
@@ -128,18 +136,22 @@ MainWindow::MainWindow(QWidget *parent)
   connect(ffIfPossible, &QAction::triggered, this, [this] {
     m_pullArgs.clear();
     m_pullArgs << "pull";
+    savePullMode();
   });
   connect(ffOnly, &QAction::triggered, this, [this] {
     m_pullArgs.clear();
     m_pullArgs << "pull" << "--ff-only";
+    savePullMode();
   });
   connect(rebase, &QAction::triggered, this, [this] {
     m_pullArgs.clear();
     m_pullArgs << "pull" << "--rebase";
+    savePullMode();
   });
   connect(fetchAll, &QAction::triggered, this, [this] {
     m_pullArgs.clear();
     m_pullArgs << "fetch" << "--all";
+    savePullMode();
   });
 
   m_commitTable = new QTableWidget(this);
@@ -353,9 +365,120 @@ MainWindow::MainWindow(QWidget *parent)
           Qt::QueuedConnection);
   connect(ui->actionAbout, &QAction::triggered, this,
           [this] { QMessageBox::about(this, tr("About"), tr("Git Client")); });
+  connect(ui->actionPreferences, &QAction::triggered, this,
+          &MainWindow::showPreferences);
+
+  restoreSettings();
+  loadRepository(m_currentPath);
 }
 
 MainWindow::~MainWindow() { delete ui; }
+
+void MainWindow::restoreSettings() {
+  QSettings settings("GitClientQt", "GitClientQt");
+  if (settings.value("reopenLastRepo", true).toBool()) {
+    const QString lastRepo = settings.value("lastRepo").toString();
+    if (!lastRepo.isEmpty() && m_currentPath.isEmpty())
+      m_currentPath = lastRepo;
+  }
+
+  const QString pullMode =
+      settings.value("pullMode", QStringLiteral("ffIfPossible")).toString();
+  if (m_pullButton && m_pullButton->menu()) {
+    for (QAction *action : m_pullButton->menu()->actions()) {
+      if (action->data().toString() == pullMode) {
+        action->setChecked(true);
+        break;
+      }
+    }
+  }
+
+  if (pullMode == QLatin1String("ffOnly")) {
+    m_pullArgs.clear();
+    m_pullArgs << "pull" << "--ff-only";
+  } else if (pullMode == QLatin1String("rebase")) {
+    m_pullArgs.clear();
+    m_pullArgs << "pull" << "--rebase";
+  } else if (pullMode == QLatin1String("fetchAll")) {
+    m_pullArgs.clear();
+    m_pullArgs << "fetch" << "--all";
+  } else {
+    m_pullArgs.clear();
+    m_pullArgs << "pull";
+  }
+}
+
+void MainWindow::savePullMode() {
+  QSettings settings("GitClientQt", "GitClientQt");
+  QString mode = QStringLiteral("ffIfPossible");
+  if (m_pullArgs.first() == QLatin1String("fetch"))
+    mode = QStringLiteral("fetchAll");
+  else if (m_pullArgs.contains(QLatin1String("--rebase")))
+    mode = QStringLiteral("rebase");
+  else if (m_pullArgs.contains(QLatin1String("--ff-only")))
+    mode = QStringLiteral("ffOnly");
+  settings.setValue("pullMode", mode);
+}
+
+void MainWindow::showPreferences() {
+  QSettings settings("GitClientQt", "GitClientQt");
+  QDialog dlg(this);
+  dlg.setWindowTitle(tr("Preferences"));
+  auto *layout = new QFormLayout(&dlg);
+
+  auto *pullModeCombo = new QComboBox(&dlg);
+  pullModeCombo->addItem(tr("Pull (fast-forward if possible)"),
+                         QStringLiteral("ffIfPossible"));
+  pullModeCombo->addItem(tr("Pull (fast-forward only)"),
+                         QStringLiteral("ffOnly"));
+  pullModeCombo->addItem(tr("Pull (rebase)"), QStringLiteral("rebase"));
+  pullModeCombo->addItem(tr("Fetch all"), QStringLiteral("fetchAll"));
+  pullModeCombo->setCurrentIndex(pullModeCombo->findData(
+      settings.value("pullMode", QStringLiteral("ffIfPossible"))));
+
+  auto *reopenBox =
+      new QCheckBox(tr("Reopen last repository on startup"), &dlg);
+  reopenBox->setChecked(settings.value("reopenLastRepo", true).toBool());
+
+  layout->addRow(tr("Default pull mode:"), pullModeCombo);
+  layout->addWidget(reopenBox);
+
+  auto *buttons = new QDialogButtonBox(
+      QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+  layout->addRow(buttons);
+  connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+  if (dlg.exec() != QDialog::Accepted)
+    return;
+
+  const QString pullMode = pullModeCombo->currentData().toString();
+  settings.setValue("pullMode", pullMode);
+  settings.setValue("reopenLastRepo", reopenBox->isChecked());
+
+  if (m_pullButton && m_pullButton->menu()) {
+    for (QAction *action : m_pullButton->menu()->actions()) {
+      if (action->data().toString() == pullMode) {
+        action->setChecked(true);
+        break;
+      }
+    }
+  }
+
+  if (pullMode == QLatin1String("ffOnly")) {
+    m_pullArgs.clear();
+    m_pullArgs << "pull" << "--ff-only";
+  } else if (pullMode == QLatin1String("rebase")) {
+    m_pullArgs.clear();
+    m_pullArgs << "pull" << "--rebase";
+  } else if (pullMode == QLatin1String("fetchAll")) {
+    m_pullArgs.clear();
+    m_pullArgs << "fetch" << "--all";
+  } else {
+    m_pullArgs.clear();
+    m_pullArgs << "pull";
+  }
+}
 
 QStringList MainWindow::runGit(const QString &path, const QStringList &args,
                                int acceptedExitCode) const {
@@ -382,6 +505,8 @@ void MainWindow::loadRepository(const QString &path) {
 
   const bool isInitialLoad = m_currentPath.isEmpty();
   m_currentPath = path;
+  QSettings settings("GitClientQt", "GitClientQt");
+  settings.setValue("lastRepo", m_currentPath);
   setWindowTitle(QFileInfo(path).fileName() + " - " + tr("Git Client Qt"));
   if (m_pushButton)
     m_pushButton->setEnabled(true);

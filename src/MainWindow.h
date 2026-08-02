@@ -47,9 +47,12 @@ private slots:
   void onInitRepository();
   void onCommitClicked();
   void onAmendToggled(int state);
+  void showPreferences();
 
 private:
   void loadRepository(const QString &path);
+  void restoreSettings();
+  void savePullMode();
   void loadWorkingTree();
   void addFileToTree(QTreeWidget *tree, const QString &filePath,
                      const QString &status = QString());

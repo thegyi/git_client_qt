@@ -37,6 +37,13 @@
                 <addaction name="actionExit"/>
             </widget>
             <addaction name="menuFile"/>
+            <widget class="QMenu" name="menuEdit">
+                <property name="title">
+                    <string>Edit</string>
+                </property>
+                <addaction name="actionPreferences"/>
+            </widget>
+            <addaction name="menuEdit"/>
             <widget class="QMenu" name="menuHelp">
                 <property name="title">
                     <string>Help</string>
@@ -59,6 +66,11 @@
         <action name="actionExit">
             <property name="text">
                 <string>Exit</string>
+            </property>
+        </action>
+        <action name="actionPreferences">
+            <property name="text">
+                <string>Preferences</string>
             </property>
         </action>
         <action name="actionAbout">
