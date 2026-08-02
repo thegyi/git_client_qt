@@ -28,12 +28,14 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QProcess>
+#include <QProcessEnvironment>
 #include <QSettings>
 #include <QShortcut>
 #include <QSplitter>
 #include <QStyle>
 #include <QTableWidget>
 #include <QTableWidgetItem>
+#include <QTemporaryDir>
 #include <QTextStream>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -49,6 +51,7 @@
 #include <QPen>
 #include <QPixmap>
 #include <QPolygonF>
+#include <QProgressDialog>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QRegularExpressionMatch>
@@ -180,13 +183,52 @@ MainWindow::MainWindow(QWidget *parent)
   connect(m_pullButton, &QToolButton::clicked, this, [this] {
     if (m_currentPath.isEmpty())
       return;
+
+    QProgressDialog progress(tr("Pulling from remote..."), tr("Cancel"), 0, 0,
+                             this);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(0);
+
+    QProcess p;
+    p.setWorkingDirectory(m_currentPath);
+
     QString output;
-    if (execGit(m_currentPath, m_pullArgs, &output)) {
+    bool canceled = false;
+
+    connect(&p, &QProcess::readyReadStandardOutput, this, [&]() {
+      output += QString::fromLocal8Bit(p.readAllStandardOutput());
+    });
+    connect(&p, &QProcess::readyReadStandardError, this, [&]() {
+      output += QString::fromLocal8Bit(p.readAllStandardError());
+    });
+    connect(&p, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            &progress, &QProgressDialog::close);
+    connect(&p, &QProcess::errorOccurred, &progress, &QProgressDialog::close);
+    connect(&progress, &QProgressDialog::canceled, &p, &QProcess::kill);
+    connect(&progress, &QProgressDialog::canceled, this,
+            [&]() { canceled = true; });
+
+    p.start(QStringLiteral("git"), m_pullArgs);
+    if (!p.waitForStarted(5000)) {
+      QMessageBox::warning(this, tr("Pull failed"),
+                           tr("Could not start git process"));
+      return;
+    }
+
+    progress.exec();
+
+    if (canceled) {
+      statusBar()->showMessage(tr("Pull canceled"));
+      return;
+    }
+    if (p.exitStatus() == QProcess::NormalExit && p.exitCode() == 0) {
       loadRepository(m_currentPath);
       statusBar()->showMessage(m_pullArgs.first() == QLatin1String("fetch")
                                    ? tr("Fetched")
                                    : tr("Pulled"));
     } else {
+      if (output.isEmpty())
+        output = p.errorString();
       QMessageBox::warning(this, tr("Pull failed"), output);
     }
   });
@@ -1938,6 +1980,8 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
       menu.addAction(tr("Create branch from this commit"));
   auto *createTagAction = menu.addAction(tr("Create Tag for this Commit"));
   auto *diffAction = menu.addAction(tr("Diff with another commit"));
+  auto *interactiveRebaseAction =
+      menu.addAction(tr("Interactive rebase from here"));
   QAction *selected = menu.exec(m_commitTable->viewport()->mapToGlobal(pos));
 
   if (selected == checkoutAction) {
@@ -1977,6 +2021,11 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
 
   if (selected == diffAction) {
     diffWithCommit(sha);
+    return;
+  }
+
+  if (selected == interactiveRebaseAction) {
+    showInteractiveRebase(sha);
     return;
   }
 
@@ -2759,5 +2808,166 @@ void MainWindow::showHunkStaging(const QString &path, bool unstage) {
   } else {
     statusBar()->showMessage(unstage ? tr("Failed to unstage hunks")
                                      : tr("Failed to stage hunks"));
+  }
+}
+
+void MainWindow::showInteractiveRebase(const QString &baseSha) {
+  if (m_currentPath.isEmpty() || baseSha.isEmpty())
+    return;
+
+  const QStringList logLines =
+      runGit(m_currentPath, {"log", baseSha + QLatin1String("..HEAD"),
+                             "--reverse", "--pretty=format:%H %s"});
+  if (logLines.isEmpty()) {
+    QMessageBox::information(
+        this, tr("Nothing to rebase"),
+        tr("There are no commits after the selected one."));
+    return;
+  }
+
+  struct Commit {
+    QString sha;
+    QString message;
+  };
+  QList<Commit> commits;
+  for (const QString &line : logLines) {
+    const int sp = line.indexOf(QLatin1Char(' '));
+    if (sp < 0)
+      continue;
+    commits.append({line.left(sp), line.mid(sp + 1)});
+  }
+  if (commits.isEmpty())
+    return;
+
+  QDialog dlg(this);
+  dlg.setWindowTitle(tr("Interactive rebase"));
+  auto *layout = new QVBoxLayout(&dlg);
+  auto *table = new QTableWidget(commits.size(), 3, &dlg);
+  table->setHorizontalHeaderLabels({tr("Action"), tr("Commit"), tr("Message")});
+  table->setColumnWidth(0, 100);
+  table->setColumnWidth(1, 260);
+  table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
+  table->verticalHeader()->setVisible(false);
+
+  const QStringList actions = {QStringLiteral("pick"), QStringLiteral("reword"),
+                               QStringLiteral("squash"),
+                               QStringLiteral("fixup"), QStringLiteral("drop")};
+  for (int i = 0; i < commits.size(); ++i) {
+    auto *combo = new QComboBox(&dlg);
+    for (const QString &a : actions)
+      combo->addItem(tr(a.toLatin1().constData()));
+    table->setCellWidget(i, 0, combo);
+    auto *shaItem =
+        new QTableWidgetItem(commits[i].sha.left(7) + QLatin1Char(' ') +
+                             commits[i].message.left(40));
+    shaItem->setFlags(shaItem->flags() & ~Qt::ItemIsEditable);
+    table->setItem(i, 1, shaItem);
+    auto *msgItem = new QTableWidgetItem(commits[i].message);
+    table->setItem(i, 2, msgItem);
+  }
+  layout->addWidget(table);
+
+  auto *buttons = new QDialogButtonBox(
+      QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+  layout->addWidget(buttons);
+  connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+  if (dlg.exec() != QDialog::Accepted)
+    return;
+
+  QTemporaryDir tempDir;
+  if (!tempDir.isValid())
+    return;
+
+  int messageCount = 0;
+  QStringList todoLines;
+  for (int i = 0; i < commits.size(); ++i) {
+    auto *combo = qobject_cast<QComboBox *>(table->cellWidget(i, 0));
+    const QString action = combo ? combo->currentText() : tr("pick");
+    const QString sha = commits[i].sha;
+    const QString newMsg =
+        table->item(i, 2) ? table->item(i, 2)->text() : commits[i].message;
+
+    if (action == tr("reword") || action == tr("squash")) {
+      QFile f(tempDir.filePath(QStringLiteral("msg_%1.txt").arg(messageCount)));
+      if (f.open(QIODevice::WriteOnly | QIODevice::Text))
+        f.write(newMsg.toUtf8());
+      ++messageCount;
+    }
+    todoLines.append(action + QLatin1Char(' ') + sha + QLatin1Char(' ') +
+                     (action == tr("drop") ? QString() : newMsg));
+  }
+
+  const QString todoFile = tempDir.filePath(QStringLiteral("todo.txt"));
+  {
+    QFile f(todoFile);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Text))
+      return;
+    f.write(todoLines.join(QLatin1Char('\n')).toUtf8());
+    f.write("\n", 1);
+  }
+
+  const QString seqEditor = tempDir.filePath(QStringLiteral("seq-editor.sh"));
+  {
+    QFile f(seqEditor);
+    if (f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+      f.write(QStringLiteral("#!/bin/sh\ncp \"%1\" \"$1\"\n")
+                  .arg(todoFile)
+                  .toUtf8());
+      f.close();
+      f.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+    }
+  }
+
+  const QString msgCounter = tempDir.filePath(QStringLiteral("counter.txt"));
+  if (messageCount > 0) {
+    QFile c(msgCounter);
+    if (c.open(QIODevice::WriteOnly | QIODevice::Text))
+      c.write("0");
+  }
+
+  const QString msgEditor = tempDir.filePath(QStringLiteral("msg-editor.sh"));
+  if (messageCount > 0) {
+    QFile f(msgEditor);
+    if (f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+      f.write(QStringLiteral("#!/bin/sh\n"
+                             "COUNTER=\"%1\"\n"
+                             "DIR=\"%2\"\n"
+                             "IDX=$(cat \"$COUNTER\")\n"
+                             "echo $((IDX+1)) > \"$COUNTER\"\n"
+                             "cp \"$DIR/msg_${IDX}.txt\" \"$1\"\n")
+                  .arg(msgCounter, tempDir.path())
+                  .toUtf8());
+      f.close();
+      f.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+    }
+  }
+
+  QProcess p;
+  QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+  env.insert(QStringLiteral("GIT_SEQUENCE_EDITOR"), seqEditor);
+  if (messageCount > 0)
+    env.insert(QStringLiteral("GIT_EDITOR"), msgEditor);
+  p.setProcessEnvironment(env);
+  p.start(QStringLiteral("git"),
+          QStringList{QStringLiteral("-C"), m_currentPath,
+                      QStringLiteral("rebase"), QStringLiteral("-i"), baseSha});
+  if (!p.waitForStarted(5000) || !p.waitForFinished(120000)) {
+    p.kill();
+    p.waitForFinished(1000);
+    statusBar()->showMessage(
+        tr("Interactive rebase timed out or failed to start"));
+    return;
+  }
+
+  const int code = p.exitCode();
+  const QString output = QString::fromLocal8Bit(p.readAllStandardOutput() +
+                                                p.readAllStandardError());
+  if (code == 0) {
+    loadRepository(m_currentPath);
+    statusBar()->showMessage(tr("Interactive rebase completed"));
+  } else {
+    QMessageBox::warning(this, tr("Interactive rebase failed"), output);
   }
 }
