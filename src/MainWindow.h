@@ -10,6 +10,7 @@ class QIcon;
 class QPushButton;
 class QLineEdit;
 class QTextEdit;
+class QLabel;
 class QDockWidget;
 class QTreeWidget;
 class QTableWidget;
@@ -38,6 +39,7 @@ private slots:
   void showUnstagedContextMenu(const QPoint &pos);
   void showStagedContextMenu(const QPoint &pos);
   void showCommitContextMenu(const QPoint &pos);
+  void showRemotesContextMenu(const QPoint &pos);
   void onTagClicked(QTreeWidgetItem *item, int column);
   void onFileClicked(QTreeWidgetItem *item, int column);
   void onInitRepository();
@@ -56,6 +58,7 @@ private:
   bool execGit(const QString &path, const QStringList &args,
                QString *output = nullptr) const;
   void loadStashes();
+  void loadRemotes();
   void updateCommitButton();
   void updateFilter();
   void onCommitSelected(QTableWidgetItem *item);
@@ -68,6 +71,7 @@ private:
   QTreeWidgetItem *m_localBranchesItem = nullptr;
   QTreeWidgetItem *m_remoteBranchesItem = nullptr;
   QTreeWidgetItem *m_tagsItem = nullptr;
+  QTreeWidgetItem *m_remotesItem = nullptr;
   QTreeWidgetItem *m_stashesItem = nullptr;
   QString m_currentPath;
   QString m_selectedCommitSha;
@@ -84,6 +88,7 @@ private:
   QLineEdit *m_commitSubject = nullptr;
   QTextEdit *m_commitBody = nullptr;
   QPushButton *m_commitButton = nullptr;
+  QLabel *m_branchLabel = nullptr;
   QPushButton *m_pushButton = nullptr;
   QPushButton *m_pullButton = nullptr;
   QLineEdit *m_filterEdit = nullptr;

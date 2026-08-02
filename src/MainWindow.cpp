@@ -27,6 +27,7 @@
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
 
+#include <QDialog>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QIcon>
@@ -47,6 +48,9 @@ MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent), ui(new Ui::MainWindow) {
   ui->setupUi(this);
   setStyleSheet("QMainWindow::separator { background: #808080; width: 4px; }");
+
+  m_branchLabel = new QLabel(this);
+  statusBar()->addPermanentWidget(m_branchLabel);
 
   auto *actionInit = new QAction(tr("Initialize Repository"), this);
   ui->menuFile->insertAction(ui->actionExit, actionInit);
@@ -110,8 +114,11 @@ MainWindow::MainWindow(QWidget *parent)
   m_commitTable->setShowGrid(false);
   m_commitTable->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
   m_commitTable->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
-  connect(m_commitTable, &QTableWidget::itemClicked, this,
-          &MainWindow::onCommitSelected);
+  connect(m_commitTable, &QTableWidget::cellClicked, this,
+          [this](int row, int column) {
+            Q_UNUSED(column)
+            onCommitSelected(m_commitTable->item(row, 0));
+          });
   m_commitTable->setContextMenuPolicy(Qt::CustomContextMenu);
   connect(m_commitTable, &QTableWidget::customContextMenuRequested, this,
           &MainWindow::showCommitContextMenu);
@@ -124,18 +131,23 @@ MainWindow::MainWindow(QWidget *parent)
   m_repoPanel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
   m_repoPanel->setMinimumWidth(80);
   m_repoPanel->setContextMenuPolicy(Qt::CustomContextMenu);
-  connect(m_repoPanel, &QTreeWidget::customContextMenuRequested, this,
-          [this](const QPoint &pos) {
-            QTreeWidgetItem *item = m_repoPanel->itemAt(pos);
-            if (item && m_stashesItem && item->parent() == m_stashesItem) {
-              showStashContextMenu(pos);
-            } else if (item && m_tagsItem &&
-                       (item == m_tagsItem || item->parent() == m_tagsItem)) {
-              showTagContextMenu(pos);
-            } else {
-              showBranchContextMenu(pos);
-            }
-          });
+  connect(
+      m_repoPanel, &QTreeWidget::customContextMenuRequested, this,
+      [this](const QPoint &pos) {
+        QTreeWidgetItem *item = m_repoPanel->itemAt(pos);
+        if (item && m_stashesItem &&
+            (item->parent() == m_stashesItem || item == m_stashesItem)) {
+          showStashContextMenu(pos);
+        } else if (item && m_tagsItem &&
+                   (item == m_tagsItem || item->parent() == m_tagsItem)) {
+          showTagContextMenu(pos);
+        } else if (item && m_remotesItem &&
+                   (item == m_remotesItem || item->parent() == m_remotesItem)) {
+          showRemotesContextMenu(pos);
+        } else {
+          showBranchContextMenu(pos);
+        }
+      });
   connect(m_repoPanel, &QTreeWidget::itemClicked, this,
           &MainWindow::onTagClicked);
   connect(m_repoPanel, &QTreeWidget::itemClicked, this,
@@ -279,6 +291,8 @@ MainWindow::MainWindow(QWidget *parent)
     if (m_pullButton)
       m_pullButton->setEnabled(false);
     setWindowTitle(tr("Git Client Qt"));
+    if (m_branchLabel)
+      m_branchLabel->clear();
     statusBar()->showMessage(tr("Repository closed"));
   });
 
@@ -358,6 +372,10 @@ void MainWindow::loadRepository(const QString &path) {
     it.value()->setExpanded(true);
   }
   m_remoteBranchesItem->setExpanded(true);
+
+  m_remotesItem = new QTreeWidgetItem(m_repoPanel, {tr("Remotes")});
+  loadRemotes();
+  m_remotesItem->setExpanded(true);
 
   m_tagsItem = new QTreeWidgetItem(m_repoPanel, {tr("Tags")});
   for (const QString &tag : runGit(path, {"tag", "--list"})) {
@@ -474,6 +492,16 @@ void MainWindow::loadRepository(const QString &path) {
       for (const QString &sha :
            runGit(path, {"log", "--format=%H", "HEAD.." + m_remoteBranchName}))
         m_unpulledShas.insert(sha);
+    }
+
+    if (m_branchLabel) {
+      QString branchText = currentBranch;
+      if (!m_remoteBranchName.isEmpty()) {
+        branchText += QString(" ↑%1 ↓%2")
+                          .arg(m_unpushedShas.size())
+                          .arg(m_unpulledShas.size());
+      }
+      m_branchLabel->setText(branchText);
     }
 
     for (const QString &record :
@@ -735,21 +763,53 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
 
 void MainWindow::showStashContextMenu(const QPoint &pos) {
   QTreeWidgetItem *item = m_repoPanel->itemAt(pos);
-  if (!item || !m_stashesItem || item->parent() != m_stashesItem)
+  if (!item || !m_stashesItem)
+    return;
+
+  QMenu menu(this);
+  if (item == m_stashesItem) {
+    auto *createAction = menu.addAction(tr("Create Stash"));
+    if (menu.exec(m_repoPanel->viewport()->mapToGlobal(pos)) != createAction)
+      return;
+
+    bool ok;
+    const QString message =
+        QInputDialog::getText(this, tr("Create Stash"), tr("Message:"),
+                              QLineEdit::Normal, QString(), &ok);
+    if (!ok || message.isEmpty())
+      return;
+
+    if (execGit(m_currentPath, {"stash", "push", "-m", message})) {
+      loadRepository(m_currentPath);
+      statusBar()->showMessage(tr("Stash created"));
+    } else {
+      statusBar()->showMessage(tr("Failed to create stash"));
+    }
+    return;
+  }
+
+  if (item->parent() != m_stashesItem)
     return;
 
   const QString ref = item->data(0, Qt::UserRole).toString();
   if (ref.isEmpty())
     return;
 
-  QMenu menu(this);
+  auto *popAction = menu.addAction(tr("Pop Stash"));
   auto *applyAction = menu.addAction(tr("Apply Stash"));
   auto *deleteAction = menu.addAction(tr("Delete Stash"));
   QAction *selected = menu.exec(m_repoPanel->viewport()->mapToGlobal(pos));
 
-  if (selected == applyAction) {
+  if (selected == popAction) {
+    if (execGit(m_currentPath, {"stash", "pop", ref})) {
+      loadRepository(m_currentPath);
+      statusBar()->showMessage(tr("Stash popped"));
+    } else {
+      statusBar()->showMessage(tr("Failed to pop stash"));
+    }
+  } else if (selected == applyAction) {
     if (execGit(m_currentPath, {"stash", "apply", ref})) {
-      loadWorkingTree();
+      loadRepository(m_currentPath);
       statusBar()->showMessage(tr("Stash applied"));
     } else {
       statusBar()->showMessage(tr("Failed to apply stash"));
@@ -827,8 +887,19 @@ void MainWindow::showTagContextMenu(const QPoint &pos) {
     }
   } else if (item->parent() == m_tagsItem) {
     const QString tagName = item->text(0);
+    auto *checkoutAction = menu.addAction(tr("Checkout Tag %1").arg(tagName));
     auto *deleteAction = menu.addAction(tr("Delete Tag %1").arg(tagName));
-    if (menu.exec(m_repoPanel->viewport()->mapToGlobal(pos)) == deleteAction) {
+    QAction *selected = menu.exec(m_repoPanel->viewport()->mapToGlobal(pos));
+
+    if (selected == checkoutAction) {
+      QString output;
+      if (execGit(m_currentPath, {"checkout", tagName}, &output)) {
+        loadRepository(m_currentPath);
+        statusBar()->showMessage(tr("Checked out tag %1").arg(tagName));
+      } else {
+        QMessageBox::warning(this, tr("Checkout failed"), output);
+      }
+    } else if (selected == deleteAction) {
       if (execGit(m_currentPath, {"tag", "-d", tagName})) {
         loadRepository(m_currentPath);
         statusBar()->showMessage(tr("Tag %1 deleted").arg(tagName));
@@ -1218,6 +1289,72 @@ void MainWindow::showUnstagedContextMenu(const QPoint &pos) {
   }
 }
 
+void MainWindow::showRemotesContextMenu(const QPoint &pos) {
+  QTreeWidgetItem *item = m_repoPanel->itemAt(pos);
+  if (!item || !m_remotesItem)
+    return;
+
+  QMenu menu(this);
+  if (item == m_remotesItem) {
+    auto *addAction = menu.addAction(tr("Add Remote"));
+    if (menu.exec(m_repoPanel->viewport()->mapToGlobal(pos)) != addAction)
+      return;
+
+    bool okName;
+    const QString name =
+        QInputDialog::getText(this, tr("Add Remote"), tr("Name:"),
+                              QLineEdit::Normal, QString(), &okName);
+    if (!okName || name.isEmpty())
+      return;
+    bool okUrl;
+    const QString url =
+        QInputDialog::getText(this, tr("Add Remote"), tr("URL:"),
+                              QLineEdit::Normal, QString(), &okUrl);
+    if (!okUrl || url.isEmpty())
+      return;
+    if (execGit(m_currentPath, {"remote", "add", name, url})) {
+      loadRemotes();
+      statusBar()->showMessage(tr("Remote %1 added").arg(name));
+    } else {
+      statusBar()->showMessage(tr("Failed to add remote %1").arg(name));
+    }
+  } else if (item->parent() == m_remotesItem) {
+    const QString remoteName = item->data(0, Qt::UserRole).toString();
+    const QString currentUrl = item->data(0, Qt::UserRole + 1).toString();
+    auto *editAction = menu.addAction(tr("Edit URL"));
+    auto *removeAction = menu.addAction(tr("Remove Remote"));
+    QAction *selected = menu.exec(m_repoPanel->viewport()->mapToGlobal(pos));
+
+    if (selected == editAction) {
+      bool ok;
+      const QString newUrl =
+          QInputDialog::getText(this, tr("Edit Remote URL"), tr("URL:"),
+                                QLineEdit::Normal, currentUrl, &ok);
+      if (ok && !newUrl.isEmpty() && newUrl != currentUrl) {
+        if (execGit(m_currentPath, {"remote", "set-url", remoteName, newUrl})) {
+          loadRemotes();
+          statusBar()->showMessage(tr("Remote %1 URL updated").arg(remoteName));
+        } else {
+          statusBar()->showMessage(
+              tr("Failed to update remote %1").arg(remoteName));
+        }
+      }
+    } else if (selected == removeAction) {
+      if (QMessageBox::question(this, tr("Remove Remote"),
+                                tr("Remove remote %1?").arg(remoteName)) ==
+          QMessageBox::Yes) {
+        if (execGit(m_currentPath, {"remote", "remove", remoteName})) {
+          loadRemotes();
+          statusBar()->showMessage(tr("Remote %1 removed").arg(remoteName));
+        } else {
+          statusBar()->showMessage(
+              tr("Failed to remove remote %1").arg(remoteName));
+        }
+      }
+    }
+  }
+}
+
 void MainWindow::showStagedContextMenu(const QPoint &pos) {
   QTreeWidgetItem *item = m_stagedTree->itemAt(pos);
   if (!item || m_currentPath.isEmpty()) {
@@ -1250,8 +1387,22 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
     return;
 
   QMenu menu(this);
+  auto *checkoutAction = menu.addAction(tr("Checkout this Commit"));
   auto *createTagAction = menu.addAction(tr("Create Tag for this Commit"));
-  if (menu.exec(m_commitTable->viewport()->mapToGlobal(pos)) != createTagAction)
+  QAction *selected = menu.exec(m_commitTable->viewport()->mapToGlobal(pos));
+
+  if (selected == checkoutAction) {
+    QString output;
+    if (execGit(m_currentPath, {"checkout", sha}, &output)) {
+      loadRepository(m_currentPath);
+      statusBar()->showMessage(tr("Checked out %1").arg(sha.left(7)));
+    } else {
+      QMessageBox::warning(this, tr("Checkout failed"), output);
+    }
+    return;
+  }
+
+  if (selected != createTagAction)
     return;
 
   bool ok;
@@ -1283,13 +1434,15 @@ void MainWindow::onCommitSelected(QTableWidgetItem *item) {
   if (m_diffView)
     m_diffView->clear();
 
+  m_commitFilesTree->clear();
+  m_selectedCommitSha.clear();
+
   const int row = item->row();
   QTableWidgetItem *shaItem = m_commitTable->item(row, 5);
   if (!shaItem)
     return;
 
   m_selectedCommitSha = shaItem->data(Qt::UserRole).toString();
-  m_commitFilesTree->clear();
 
   for (const QString &line :
        runGit(m_currentPath, {"diff-tree", "--no-commit-id", "--name-status",
@@ -1347,6 +1500,29 @@ void MainWindow::onInitRepository() {
   }
 }
 
+void MainWindow::loadRemotes() {
+  if (!m_remotesItem || m_currentPath.isEmpty())
+    return;
+  for (QTreeWidgetItem *child : m_remotesItem->takeChildren())
+    delete child;
+
+  for (const QString &line : runGit(m_currentPath, {"remote", "-v"})) {
+    const QStringList parts = line.split('\t');
+    if (parts.size() < 2)
+      continue;
+    const QString name = parts.at(0);
+    const QString rest = parts.at(1);
+    if (rest.endsWith(" (push)"))
+      continue;
+    const QString url = rest.section(' ', 0, -2);
+    QTreeWidgetItem *child = new QTreeWidgetItem(m_remotesItem, {name});
+    child->setToolTip(0, url);
+    child->setData(0, Qt::UserRole, name);
+    child->setData(0, Qt::UserRole + 1, url);
+    child->setText(0, QString("%1   %2").arg(name, url));
+  }
+}
+
 void MainWindow::loadStashes() {
   if (!m_stashesItem || m_currentPath.isEmpty())
     return;
@@ -1376,7 +1552,24 @@ void MainWindow::onStashClicked(QTreeWidgetItem *item, int column) {
   if (ref.isEmpty())
     return;
 
-  const QStringList diff = runGit(m_currentPath, {"stash", "show", "-p", ref});
+  m_selectedCommitSha = ref;
+
+  if (m_commitFilesTree) {
+    m_commitFilesTree->clear();
+    for (const QString &line :
+         runGit(m_currentPath,
+                {"diff", "--name-status", ref + QLatin1Char('^'), ref})) {
+      const QStringList parts = line.split('\t');
+      if (parts.size() < 2)
+        continue;
+      addFileToTree(m_commitFilesTree, parts.last(), parts.first().left(1));
+    }
+    if (m_commitFilesTree->topLevelItemCount() > 0)
+      m_commitFilesTree->collapseAll();
+  }
+
+  const QStringList diff =
+      runGit(m_currentPath, {"show", "--pretty=format:", "--no-notes", ref});
   if (m_diffView) {
     m_diffView->setHtml(diff.isEmpty() ? tr("No diff") : formatDiff(diff));
   }
