@@ -8,6 +8,7 @@
 class QPoint;
 class QIcon;
 class QPushButton;
+class QToolButton;
 class QLineEdit;
 class QTextEdit;
 class QCheckBox;
@@ -93,7 +94,8 @@ private:
   QCheckBox *m_amendCheckBox = nullptr;
   QLabel *m_branchLabel = nullptr;
   QPushButton *m_pushButton = nullptr;
-  QPushButton *m_pullButton = nullptr;
+  QToolButton *m_pullButton = nullptr;
+  QStringList m_pullArgs;
   QLineEdit *m_filterEdit = nullptr;
   QDockWidget *m_repoDock = nullptr;
   QDockWidget *m_workTreeDock = nullptr;

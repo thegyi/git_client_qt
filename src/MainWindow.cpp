@@ -5,6 +5,7 @@
 
 #include <QAbstractItemView>
 #include <QAction>
+#include <QActionGroup>
 #include <QApplication>
 #include <QCheckBox>
 #include <QDockWidget>
@@ -25,6 +26,7 @@
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QTextStream>
+#include <QToolButton>
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
 
@@ -72,12 +74,32 @@ MainWindow::MainWindow(QWidget *parent)
   m_pushButton->setIcon(
       QApplication::style()->standardIcon(QStyle::SP_ArrowUp));
   m_pushButton->setEnabled(false);
-  m_pullButton = new QPushButton(tr("Pull"), this);
-  m_pullButton->setIcon(
-      QApplication::style()->standardIcon(QStyle::SP_ArrowDown));
+  m_pullButton = new QToolButton(this);
+  m_pullButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+  m_pullButton->setPopupMode(QToolButton::MenuButtonPopup);
   m_pullButton->setEnabled(false);
   remoteBar->addWidget(m_pushButton);
   remoteBar->addWidget(m_pullButton);
+
+  m_pullButton->setText(tr("Pull"));
+
+  auto *pullMenu = new QMenu(this);
+  auto *ffIfPossible =
+      pullMenu->addAction(tr("Pull (fast-forward if possible)"));
+  auto *ffOnly = pullMenu->addAction(tr("Pull (fast-forward only)"));
+  auto *rebase = pullMenu->addAction(tr("Pull (rebase)"));
+  auto *fetchAll = pullMenu->addAction(tr("Fetch all"));
+  auto *actionGroup = new QActionGroup(this);
+  actionGroup->setExclusive(true);
+  for (auto *action : {ffIfPossible, ffOnly, rebase, fetchAll}) {
+    action->setCheckable(true);
+    actionGroup->addAction(action);
+  }
+  ffIfPossible->setChecked(true);
+  m_pullButton->setMenu(pullMenu);
+  m_pullArgs.clear();
+  m_pullArgs << "pull";
+
   connect(m_pushButton, &QPushButton::clicked, this, [this] {
     if (m_currentPath.isEmpty())
       return;
@@ -88,16 +110,36 @@ MainWindow::MainWindow(QWidget *parent)
       QMessageBox::warning(this, tr("Push failed"), output);
     }
   });
-  connect(m_pullButton, &QPushButton::clicked, this, [this] {
+
+  connect(m_pullButton, &QToolButton::clicked, this, [this] {
     if (m_currentPath.isEmpty())
       return;
     QString output;
-    if (execGit(m_currentPath, {"pull"}, &output)) {
+    if (execGit(m_currentPath, m_pullArgs, &output)) {
       loadRepository(m_currentPath);
-      statusBar()->showMessage(tr("Pulled"));
+      statusBar()->showMessage(m_pullArgs.first() == QLatin1String("fetch")
+                                   ? tr("Fetched")
+                                   : tr("Pulled"));
     } else {
       QMessageBox::warning(this, tr("Pull failed"), output);
     }
+  });
+
+  connect(ffIfPossible, &QAction::triggered, this, [this] {
+    m_pullArgs.clear();
+    m_pullArgs << "pull";
+  });
+  connect(ffOnly, &QAction::triggered, this, [this] {
+    m_pullArgs.clear();
+    m_pullArgs << "pull" << "--ff-only";
+  });
+  connect(rebase, &QAction::triggered, this, [this] {
+    m_pullArgs.clear();
+    m_pullArgs << "pull" << "--rebase";
+  });
+  connect(fetchAll, &QAction::triggered, this, [this] {
+    m_pullArgs.clear();
+    m_pullArgs << "fetch" << "--all";
   });
 
   m_commitTable = new QTableWidget(this);
@@ -331,6 +373,8 @@ QStringList MainWindow::runGit(const QString &path, const QStringList &args,
 }
 
 void MainWindow::loadRepository(const QString &path) {
+  if (path.isEmpty())
+    return;
   if (runGit(path, {"rev-parse", "--git-dir"}).isEmpty()) {
     statusBar()->showMessage(tr("Not a git repository: %1").arg(path));
     return;
