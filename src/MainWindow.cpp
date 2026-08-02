@@ -178,6 +178,7 @@ MainWindow::MainWindow(QWidget *parent)
       return;
     QString output;
     if (execGit(m_currentPath, {"push"}, &output)) {
+      loadRepository(m_currentPath);
       statusBar()->showMessage(tr("Pushed"));
     } else {
       QMessageBox::warning(this, tr("Push failed"), output);
