@@ -70,6 +70,21 @@ MainWindow::MainWindow(QWidget *parent)
   grepAction->setShortcut(QKeySequence(QLatin1String("Ctrl+Shift+G")));
   connect(grepAction, &QAction::triggered, this, &MainWindow::onGrepRequested);
 
+  auto *submodulesMenu = new QMenu(tr("Submodules"), this);
+  menuBar()->addMenu(submodulesMenu);
+  auto *initSubmodulesAction = submodulesMenu->addAction(tr("Init"));
+  auto *updateSubmodulesAction = submodulesMenu->addAction(tr("Update"));
+  auto *addSubmoduleAction = submodulesMenu->addAction(tr("Add..."));
+  auto *openSubmoduleAction = submodulesMenu->addAction(tr("Open..."));
+  connect(initSubmodulesAction, &QAction::triggered, this,
+          &MainWindow::initSubmodules);
+  connect(updateSubmodulesAction, &QAction::triggered, this,
+          &MainWindow::updateSubmodules);
+  connect(addSubmoduleAction, &QAction::triggered, this,
+          &MainWindow::addSubmodule);
+  connect(openSubmoduleAction, &QAction::triggered, this,
+          &MainWindow::openSubmodule);
+
   ui->actionOpen->setShortcut(QKeySequence::Open);
   ui->actionClose->setShortcut(QKeySequence::Close);
   ui->actionExit->setShortcut(QKeySequence::Quit);
@@ -233,6 +248,10 @@ MainWindow::MainWindow(QWidget *parent)
         } else if (item && m_remotesItem &&
                    (item == m_remotesItem || item->parent() == m_remotesItem)) {
           showRemotesContextMenu(pos);
+        } else if (item && m_submodulesItem &&
+                   (item == m_submodulesItem ||
+                    item->parent() == m_submodulesItem)) {
+          showSubmodulesContextMenu(pos);
         } else {
           showBranchContextMenu(pos);
         }
@@ -409,6 +428,7 @@ MainWindow::MainWindow(QWidget *parent)
     m_remoteBranchesItem = nullptr;
     m_tagsItem = nullptr;
     m_stashesItem = nullptr;
+    m_submodulesItem = nullptr;
     m_localHeadSha.clear();
     m_remoteHeadSha.clear();
     m_remoteBranchName.clear();
@@ -691,7 +711,7 @@ void MainWindow::loadRepository(const QString &path) {
   }
   m_tagsItem->setExpanded(true);
 
-  auto *submodules = new QTreeWidgetItem(m_repoPanel, {tr("Submodules")});
+  m_submodulesItem = new QTreeWidgetItem(m_repoPanel, {tr("Submodules")});
   for (const QString &line : runGit(path, {"submodule", "status"})) {
     if (line.length() < 2)
       continue;
@@ -706,9 +726,10 @@ void MainWindow::loadRepository(const QString &path) {
       text += tr(" (needs update)");
     else if (status == '-')
       text += tr(" (not initialized)");
-    new QTreeWidgetItem(submodules, QStringList{text});
+    auto *subItem = new QTreeWidgetItem(m_submodulesItem, QStringList{text});
+    subItem->setData(0, Qt::UserRole, subPath);
   }
-  submodules->setExpanded(true);
+  m_submodulesItem->setExpanded(true);
 
   m_stashesItem = new QTreeWidgetItem(m_repoPanel, {tr("Stashes")});
   loadStashes();
@@ -2367,4 +2388,148 @@ void MainWindow::editGitignore() {
                            tr("Could not write .gitignore."));
     }
   }
+}
+
+void MainWindow::showSubmodulesContextMenu(const QPoint &pos) {
+  QTreeWidgetItem *item = m_repoPanel->itemAt(pos);
+  if (!item || !m_submodulesItem)
+    return;
+
+  QMenu menu(this);
+  QAction *selected = nullptr;
+
+  if (item == m_submodulesItem) {
+    auto *initAllAction = menu.addAction(tr("Init all"));
+    auto *updateAllAction = menu.addAction(tr("Update all"));
+    auto *addAction = menu.addAction(tr("Add..."));
+    selected = menu.exec(m_repoPanel->viewport()->mapToGlobal(pos));
+    if (!selected)
+      return;
+
+    if (selected == initAllAction) {
+      initSubmodules();
+    } else if (selected == updateAllAction) {
+      updateSubmodules();
+    } else if (selected == addAction) {
+      addSubmodule();
+    }
+    return;
+  }
+
+  if (item->parent() != m_submodulesItem)
+    return;
+
+  const QString subPath = item->data(0, Qt::UserRole).toString();
+  if (subPath.isEmpty())
+    return;
+
+  auto *openAction = menu.addAction(tr("Open"));
+  auto *initAction = menu.addAction(tr("Init"));
+  auto *updateAction = menu.addAction(tr("Update"));
+  selected = menu.exec(m_repoPanel->viewport()->mapToGlobal(pos));
+  if (!selected)
+    return;
+
+  if (selected == openAction) {
+    loadRepository(m_currentPath + QLatin1Char('/') + subPath);
+  } else if (selected == initAction || selected == updateAction) {
+    if (execGit(m_currentPath, {"submodule", "update", "--init", subPath})) {
+      loadRepository(m_currentPath);
+      statusBar()->showMessage(tr("Submodule %1 updated").arg(subPath));
+    } else {
+      statusBar()->showMessage(tr("Failed to update %1").arg(subPath));
+    }
+  }
+}
+
+void MainWindow::initSubmodules() {
+  if (m_currentPath.isEmpty()) {
+    QMessageBox::warning(this, tr("No repository"),
+                         tr("Open a repository first."));
+    return;
+  }
+
+  if (execGit(m_currentPath,
+              {"submodule", "update", "--init", "--recursive"})) {
+    loadWorkingTree();
+    statusBar()->showMessage(tr("Submodules initialized"));
+  } else {
+    statusBar()->showMessage(tr("Failed to initialize submodules"));
+  }
+}
+
+void MainWindow::updateSubmodules() {
+  if (m_currentPath.isEmpty()) {
+    QMessageBox::warning(this, tr("No repository"),
+                         tr("Open a repository first."));
+    return;
+  }
+
+  if (execGit(m_currentPath, {"submodule", "update", "--recursive"})) {
+    loadWorkingTree();
+    statusBar()->showMessage(tr("Submodules updated"));
+  } else {
+    statusBar()->showMessage(tr("Failed to update submodules"));
+  }
+}
+
+void MainWindow::addSubmodule() {
+  if (m_currentPath.isEmpty()) {
+    QMessageBox::warning(this, tr("No repository"),
+                         tr("Open a repository first."));
+    return;
+  }
+
+  bool okUrl;
+  const QString url =
+      QInputDialog::getText(this, tr("Add Submodule"), tr("Repository URL:"),
+                            QLineEdit::Normal, QString(), &okUrl);
+  if (!okUrl || url.isEmpty())
+    return;
+
+  bool okPath;
+  const QString path =
+      QInputDialog::getText(this, tr("Add Submodule"), tr("Local path:"),
+                            QLineEdit::Normal, QString(), &okPath);
+  if (!okPath || path.isEmpty())
+    return;
+
+  if (execGit(m_currentPath, {"submodule", "add", url, path})) {
+    loadWorkingTree();
+    statusBar()->showMessage(tr("Submodule added"));
+  } else {
+    statusBar()->showMessage(tr("Failed to add submodule"));
+  }
+}
+
+void MainWindow::openSubmodule() {
+  if (m_currentPath.isEmpty()) {
+    QMessageBox::warning(this, tr("No repository"),
+                         tr("Open a repository first."));
+    return;
+  }
+
+  const QStringList configLines =
+      runGit(m_currentPath, {"config", "--file", QStringLiteral(".gitmodules"),
+                             "--get-regexp", "^submodule\\..*\\.path$"});
+  if (configLines.isEmpty()) {
+    QMessageBox::warning(this, tr("No submodules"),
+                         tr("This repository has no submodules."));
+    return;
+  }
+
+  QStringList paths;
+  for (const QString &line : configLines) {
+    const int sep = line.indexOf(QLatin1Char(' '));
+    if (sep > 0)
+      paths.append(line.mid(sep + 1));
+  }
+
+  bool ok;
+  const QString path = QInputDialog::getItem(
+      this, tr("Open Submodule"), tr("Submodule:"), paths, 0, false, &ok);
+  if (!ok || path.isEmpty())
+    return;
+
+  loadRepository(m_currentPath + QLatin1Char('/') + path);
 }

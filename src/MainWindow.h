@@ -44,6 +44,7 @@ private slots:
   void showCommitFilesContextMenu(const QPoint &pos);
   void showCommitContextMenu(const QPoint &pos);
   void showRemotesContextMenu(const QPoint &pos);
+  void showSubmodulesContextMenu(const QPoint &pos);
   void onTagClicked(QTreeWidgetItem *item, int column);
   void onFileClicked(QTreeWidgetItem *item, int column);
   void onCloneRepository();
@@ -52,6 +53,10 @@ private slots:
   void onAmendToggled(int state);
   void showPreferences();
   void editGitignore();
+  void initSubmodules();
+  void updateSubmodules();
+  void addSubmodule();
+  void openSubmodule();
 
 private:
   void loadRepository(const QString &path);
@@ -88,6 +93,7 @@ private:
   QTreeWidgetItem *m_tagsItem = nullptr;
   QTreeWidgetItem *m_remotesItem = nullptr;
   QTreeWidgetItem *m_stashesItem = nullptr;
+  QTreeWidgetItem *m_submodulesItem = nullptr;
   QString m_currentPath;
   QString m_selectedCommitSha;
   QString m_localHeadSha;
