@@ -44,6 +44,7 @@ private slots:
   void showRemotesContextMenu(const QPoint &pos);
   void onTagClicked(QTreeWidgetItem *item, int column);
   void onFileClicked(QTreeWidgetItem *item, int column);
+  void onCloneRepository();
   void onInitRepository();
   void onCommitClicked();
   void onAmendToggled(int state);

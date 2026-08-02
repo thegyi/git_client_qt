@@ -59,6 +59,11 @@ MainWindow::MainWindow(QWidget *parent)
   m_branchLabel = new QLabel(this);
   statusBar()->addPermanentWidget(m_branchLabel);
 
+  auto *actionClone = new QAction(tr("Clone Repository"), this);
+  ui->menuFile->insertAction(ui->actionOpen, actionClone);
+  connect(actionClone, &QAction::triggered, this,
+          &MainWindow::onCloneRepository);
+
   auto *actionInit = new QAction(tr("Initialize Repository"), this);
   ui->menuFile->insertAction(ui->actionExit, actionInit);
   connect(actionInit, &QAction::triggered, this, &MainWindow::onInitRepository);
@@ -399,9 +404,6 @@ void MainWindow::restoreSettings() {
   } else if (pullMode == QLatin1String("rebase")) {
     m_pullArgs.clear();
     m_pullArgs << "pull" << "--rebase";
-  } else if (pullMode == QLatin1String("fetchAll")) {
-    m_pullArgs.clear();
-    m_pullArgs << "fetch" << "--all";
   } else {
     m_pullArgs.clear();
     m_pullArgs << "pull";
@@ -504,10 +506,18 @@ void MainWindow::loadRepository(const QString &path) {
   }
 
   const bool isInitialLoad = m_currentPath.isEmpty();
-  m_currentPath = path;
+  const QString repoRoot =
+      runGit(path, {"rev-parse", "--show-toplevel"}).value(0);
+  if (repoRoot.isEmpty()) {
+    statusBar()->showMessage(
+        tr("Could not determine repository root for %1").arg(path));
+    return;
+  }
+  m_currentPath = repoRoot;
   QSettings settings("GitClientQt", "GitClientQt");
   settings.setValue("lastRepo", m_currentPath);
-  setWindowTitle(QFileInfo(path).fileName() + " - " + tr("Git Client Qt"));
+  setWindowTitle(QFileInfo(m_currentPath).fileName() + " - " +
+                 tr("Git Client Qt"));
   if (m_pushButton)
     m_pushButton->setEnabled(true);
   if (m_pullButton)
@@ -860,7 +870,10 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
     auto *createAction =
         menu.addAction(tr("Create branch from %1").arg(branchName));
     auto *renameAction = menu.addAction(tr("Rename"));
-    auto *deleteAction = menu.addAction(tr("Delete"));
+    const QString currentBranch =
+        runGit(m_currentPath, {"rev-parse", "--abbrev-ref", "HEAD"}).value(0);
+    auto *deleteAction =
+        (branchName != currentBranch) ? menu.addAction(tr("Delete")) : nullptr;
     selected = menu.exec(m_repoPanel->viewport()->mapToGlobal(pos));
 
     if (!selected) {
@@ -980,7 +993,7 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
       bool ok;
       const QString localName = QInputDialog::getText(
           this, tr("Checkout Remote Branch"), tr("Local branch name:"),
-          QLineEdit::Normal, QString(), &ok);
+          QLineEdit::Normal, branchName, &ok);
       if (ok && !localName.isEmpty()) {
         if (execGit(m_currentPath,
                     {"checkout", "-b", localName, fullBranchName})) {
@@ -1747,7 +1760,7 @@ void MainWindow::onCommitSelected(QTableWidgetItem *item) {
 
   for (const QString &line :
        runGit(m_currentPath, {"diff-tree", "--no-commit-id", "--name-status",
-                              "-r", m_selectedCommitSha})) {
+                              "--root", "-r", m_selectedCommitSha})) {
     const QStringList parts = line.split('\t');
     if (parts.size() < 2)
       continue;
@@ -1798,6 +1811,40 @@ void MainWindow::onInitRepository() {
     statusBar()->showMessage(tr("Repository initialized"));
   } else {
     statusBar()->showMessage(tr("Failed to initialize repository"));
+  }
+}
+
+void MainWindow::onCloneRepository() {
+  bool ok;
+  const QString url =
+      QInputDialog::getText(this, tr("Clone Repository"), tr("Remote URL:"),
+                            QLineEdit::Normal, QString(), &ok);
+  if (!ok || url.isEmpty())
+    return;
+
+  const QString parentDir =
+      QFileDialog::getExistingDirectory(this, tr("Clone Destination"));
+  if (parentDir.isEmpty())
+    return;
+
+  QString repoName = url.mid(url.lastIndexOf('/') + 1);
+  if (repoName.endsWith(QLatin1String(".git")))
+    repoName.chop(4);
+  if (repoName.isEmpty())
+    repoName = tr("repo");
+
+  const QString localPath = parentDir + '/' + repoName;
+  if (QFileInfo(localPath).exists()) {
+    QMessageBox::warning(this, tr("Folder already exists"),
+                         tr("The destination folder already exists."));
+    return;
+  }
+
+  if (execGit(parentDir, {"clone", url, repoName})) {
+    loadRepository(localPath);
+    statusBar()->showMessage(tr("Cloned %1").arg(repoName));
+  } else {
+    statusBar()->showMessage(tr("Clone failed"));
   }
 }
 
