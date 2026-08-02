@@ -54,7 +54,11 @@
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent), ui(new Ui::MainWindow) {
   ui->setupUi(this);
-  setStyleSheet("QMainWindow::separator { background: #808080; width: 4px; }");
+  setStyleSheet("QMainWindow::separator { background: #808080; width: 4px; }"
+                "QMenu::item { padding: 6px 24px 6px 12px; }");
+
+  m_recentMenu = new QMenu(tr("Recent Repositories"), this);
+  ui->menuFile->insertMenu(ui->actionClose, m_recentMenu);
 
   m_branchLabel = new QLabel(this);
   statusBar()->addPermanentWidget(m_branchLabel);
@@ -480,6 +484,36 @@ void MainWindow::showPreferences() {
     m_pullArgs.clear();
     m_pullArgs << "pull";
   }
+
+  updateRecentRepos();
+}
+
+void MainWindow::updateRecentRepos() {
+  if (!m_recentMenu)
+    return;
+  m_recentMenu->clear();
+  QSettings settings("GitClientQt", "GitClientQt");
+  const QStringList recent = settings.value("recentRepos").toStringList();
+  if (recent.isEmpty()) {
+    auto *none = m_recentMenu->addAction(tr("No recent repositories"));
+    none->setEnabled(false);
+    return;
+  }
+  for (const QString &repo : recent) {
+    if (repo.isEmpty())
+      continue;
+    auto *action = m_recentMenu->addAction(QFileInfo(repo).fileName());
+    action->setToolTip(repo);
+    connect(action, &QAction::triggered, this,
+            [this, repo] { loadRepository(repo); });
+  }
+  m_recentMenu->addSeparator();
+  auto *clearAction = m_recentMenu->addAction(tr("Clear Recent Repositories"));
+  connect(clearAction, &QAction::triggered, this, [this] {
+    QSettings settings("GitClientQt", "GitClientQt");
+    settings.remove("recentRepos");
+    updateRecentRepos();
+  });
 }
 
 QStringList MainWindow::runGit(const QString &path, const QStringList &args,
@@ -516,6 +550,14 @@ void MainWindow::loadRepository(const QString &path) {
   m_currentPath = repoRoot;
   QSettings settings("GitClientQt", "GitClientQt");
   settings.setValue("lastRepo", m_currentPath);
+
+  QStringList recent = settings.value("recentRepos").toStringList();
+  recent.removeAll(m_currentPath);
+  recent.prepend(m_currentPath);
+  while (recent.size() > 10)
+    recent.removeLast();
+  settings.setValue("recentRepos", recent);
+  updateRecentRepos();
   setWindowTitle(QFileInfo(m_currentPath).fileName() + " - " +
                  tr("Git Client Qt"));
   if (m_pushButton)

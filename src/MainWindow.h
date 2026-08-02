@@ -7,6 +7,7 @@
 
 class QPoint;
 class QIcon;
+class QMenu;
 class QPushButton;
 class QToolButton;
 class QLineEdit;
@@ -68,6 +69,7 @@ private:
   void loadRemotes();
   void updateCommitButton();
   void updateFilter();
+  void updateRecentRepos();
   void onCommitSelected(QTableWidgetItem *item);
   void onCommitFileClicked(QTreeWidgetItem *item, int column);
   void onStashClicked(QTreeWidgetItem *item, int column);
@@ -99,6 +101,7 @@ private:
   QLabel *m_branchLabel = nullptr;
   QPushButton *m_pushButton = nullptr;
   QToolButton *m_pullButton = nullptr;
+  QMenu *m_recentMenu = nullptr;
   QStringList m_pullArgs;
   QLineEdit *m_filterEdit = nullptr;
   QDockWidget *m_repoDock = nullptr;
