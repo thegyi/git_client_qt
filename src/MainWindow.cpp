@@ -675,9 +675,11 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
 
   if (isLocal) {
     auto *switchAction = menu.addAction(tr("Switch to %1").arg(branchName));
+    auto *pushAction = menu.addAction(tr("Push %1 to remote").arg(branchName));
+    auto *setUpstreamAction = menu.addAction(tr("Set upstream"));
     auto *createAction =
-        menu.addAction(tr("Create branch from %1...").arg(branchName));
-    auto *renameAction = menu.addAction(tr("Rename..."));
+        menu.addAction(tr("Create branch from %1").arg(branchName));
+    auto *renameAction = menu.addAction(tr("Rename"));
     auto *deleteAction = menu.addAction(tr("Delete"));
     selected = menu.exec(m_repoPanel->viewport()->mapToGlobal(pos));
 
@@ -690,6 +692,54 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
         loadRepository(m_currentPath);
       } else {
         statusBar()->showMessage(tr("Failed to switch to %1").arg(branchName));
+      }
+    } else if (selected == pushAction) {
+      const QStringList remotes = runGit(m_currentPath, {"remote"});
+      if (remotes.isEmpty()) {
+        QMessageBox::warning(this, tr("No remotes"),
+                             tr("There are no remotes to push to."));
+        return;
+      }
+      bool okRemote;
+      const QString remote =
+          QInputDialog::getItem(this, tr("Push to Remote"), tr("Remote:"),
+                                remotes, 0, false, &okRemote);
+      if (!okRemote || remote.isEmpty())
+        return;
+      if (execGit(m_currentPath, {"push", "-u", remote, branchName})) {
+        loadRepository(m_currentPath);
+        statusBar()->showMessage(tr("Pushed %1 to %2").arg(branchName, remote));
+      } else {
+        statusBar()->showMessage(tr("Failed to push %1").arg(branchName));
+      }
+    } else if (selected == setUpstreamAction) {
+      const QStringList remoteBranchesRaw =
+          runGit(m_currentPath, {"branch", "-r"});
+      QStringList remoteBranches;
+      for (const QString &line : remoteBranchesRaw) {
+        if (line.contains(QLatin1String(" -> ")))
+          continue;
+        remoteBranches.append(line.trimmed());
+      }
+      if (remoteBranches.isEmpty()) {
+        QMessageBox::warning(this, tr("No remote branches"),
+                             tr("There are no remote branches to track."));
+        return;
+      }
+      bool ok;
+      const QString upstream =
+          QInputDialog::getItem(this, tr("Set Upstream"), tr("Remote branch:"),
+                                remoteBranches, 0, false, &ok);
+      if (!ok || upstream.isEmpty())
+        return;
+      if (execGit(m_currentPath,
+                  {"branch", "--set-upstream-to", upstream, branchName})) {
+        loadRepository(m_currentPath);
+        statusBar()->showMessage(
+            tr("Upstream set for %1 to %2").arg(branchName, upstream));
+      } else {
+        statusBar()->showMessage(
+            tr("Failed to set upstream for %1").arg(branchName));
       }
     } else if (selected == createAction) {
       bool ok;
@@ -725,7 +775,7 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
     }
   } else {
     const QString fullBranchName = item->parent()->text(0) + "/" + branchName;
-    auto *checkoutAction = menu.addAction(tr("Checkout as tracking branch..."));
+    auto *checkoutAction = menu.addAction(tr("Checkout as tracking branch"));
     auto *deleteRemoteAction =
         menu.addAction(tr("Delete remote branch %1").arg(fullBranchName));
     selected = menu.exec(m_repoPanel->viewport()->mapToGlobal(pos));
@@ -1388,6 +1438,8 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
 
   QMenu menu(this);
   auto *checkoutAction = menu.addAction(tr("Checkout this Commit"));
+  auto *createBranchAction =
+      menu.addAction(tr("Create branch from this commit"));
   auto *createTagAction = menu.addAction(tr("Create Tag for this Commit"));
   QAction *selected = menu.exec(m_commitTable->viewport()->mapToGlobal(pos));
 
@@ -1398,6 +1450,30 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
       statusBar()->showMessage(tr("Checked out %1").arg(sha.left(7)));
     } else {
       QMessageBox::warning(this, tr("Checkout failed"), output);
+    }
+    return;
+  }
+
+  if (selected == createBranchAction) {
+    bool okBranch;
+    const QString branchName =
+        QInputDialog::getText(this, tr("Create Branch"), tr("Branch name:"),
+                              QLineEdit::Normal, QString(), &okBranch);
+    if (!okBranch || branchName.isEmpty())
+      return;
+
+    if (branchName.contains(QLatin1Char(' '))) {
+      QMessageBox::warning(this, tr("Invalid branch name"),
+                           tr("Branch names cannot contain spaces."));
+      return;
+    }
+
+    if (execGit(m_currentPath, {"branch", branchName, sha})) {
+      loadRepository(m_currentPath);
+      statusBar()->showMessage(tr("Branch %1 created").arg(branchName));
+    } else {
+      statusBar()->showMessage(
+          tr("Failed to create branch %1").arg(branchName));
     }
     return;
   }
