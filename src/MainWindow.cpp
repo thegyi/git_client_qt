@@ -994,6 +994,8 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
         (branchName != currentBranch)
             ? menu.addAction(tr("Merge %1 into current").arg(branchName))
             : nullptr;
+    auto *rebaseAction =
+        menu.addAction(tr("Rebase %1 onto...").arg(branchName));
     auto *deleteAction =
         (branchName != currentBranch) ? menu.addAction(tr("Delete")) : nullptr;
     selected = menu.exec(m_repoPanel->viewport()->mapToGlobal(pos));
@@ -1105,6 +1107,32 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
             tr("Merged %1 into %2").arg(branchName, currentBranch));
       } else {
         QMessageBox::warning(this, tr("Merge failed"), output);
+      }
+    } else if (selected == rebaseAction) {
+      QStringList branches =
+          runGit(m_currentPath, {"branch", "--format=%(refname:short)"});
+      branches.removeOne(branchName);
+      if (branches.isEmpty()) {
+        QMessageBox::warning(this, tr("No target branch"),
+                             tr("There are no other branches to rebase onto."));
+        return;
+      }
+
+      bool ok;
+      const QString targetBranch = QInputDialog::getItem(
+          this, tr("Rebase %1").arg(branchName),
+          tr("Rebase %1 onto:").arg(branchName), branches, 0, false, &ok);
+      if (!ok || targetBranch.isEmpty())
+        return;
+
+      QString output;
+      if (execGit(m_currentPath, {"rebase", targetBranch, branchName},
+                  &output)) {
+        loadRepository(m_currentPath);
+        statusBar()->showMessage(
+            tr("Rebased %1 onto %2").arg(branchName, targetBranch));
+      } else {
+        QMessageBox::warning(this, tr("Rebase failed"), output);
       }
     } else if (selected == deleteAction) {
       if (execGit(m_currentPath, {"branch", "-d", branchName})) {
