@@ -211,7 +211,40 @@ MainWindow::MainWindow(QWidget *parent)
     connect(&progress, &QProgressDialog::canceled, this,
             [&]() { canceled = true; });
 
-    p.start(QStringLiteral("git"), m_pullArgs);
+    QStringList pullArgs = m_pullArgs;
+    if (m_pullArgs.first() != QLatin1String("fetch")) {
+      const QString currentBranch =
+          runGit(m_currentPath, {"rev-parse", "--abbrev-ref", "HEAD"}).value(0);
+      if (currentBranch.isEmpty()) {
+        QMessageBox::warning(this, tr("Pull failed"), tr("No current branch"));
+        return;
+      }
+      const QString remote =
+          runGit(
+              m_currentPath,
+              {"config", QStringLiteral("branch.%1.remote").arg(currentBranch)})
+              .value(0);
+      QString merge =
+          runGit(
+              m_currentPath,
+              {"config", QStringLiteral("branch.%1.merge").arg(currentBranch)})
+              .value(0);
+      if (merge.startsWith(QLatin1String("refs/heads/")))
+        merge.remove(0, 11);
+      if (remote.isEmpty() || merge.isEmpty()) {
+        const QStringList remotes = runGit(m_currentPath, {"remote"});
+        if (remotes.isEmpty()) {
+          QMessageBox::warning(this, tr("No remote"),
+                               tr("There is no remote to pull from."));
+          return;
+        }
+        pullArgs << remotes.first() << currentBranch;
+      } else {
+        pullArgs << remote << merge;
+      }
+    }
+
+    p.start(QStringLiteral("git"), pullArgs);
     if (!p.waitForStarted(5000)) {
       QMessageBox::warning(this, tr("Pull failed"),
                            tr("Could not start git process"));
