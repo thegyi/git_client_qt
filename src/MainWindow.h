@@ -51,6 +51,7 @@ private slots:
   void onCommitClicked();
   void onAmendToggled(int state);
   void showPreferences();
+  void editGitignore();
 
 private:
   void loadRepository(const QString &path);

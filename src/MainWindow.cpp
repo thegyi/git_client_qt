@@ -89,6 +89,11 @@ MainWindow::MainWindow(QWidget *parent)
   actionInit->setShortcut(QKeySequence(QLatin1String("Ctrl+N")));
   connect(actionInit, &QAction::triggered, this, &MainWindow::onInitRepository);
 
+  auto *editGitignoreAction = new QAction(tr("Edit .gitignore"), this);
+  ui->menuFile->insertAction(ui->actionExit, editGitignoreAction);
+  connect(editGitignoreAction, &QAction::triggered, this,
+          &MainWindow::editGitignore);
+
   auto *filterBar = addToolBar(tr("Filter"));
   filterBar->setMovable(false);
   m_filterEdit = new QLineEdit(this);
@@ -2290,5 +2295,48 @@ void MainWindow::onFileClicked(QTreeWidgetItem *item, int column) {
                                    : QStringList{"diff", "--", path});
   if (m_diffView) {
     m_diffView->setHtml(diff.isEmpty() ? tr("No diff") : formatDiff(diff));
+  }
+}
+
+void MainWindow::editGitignore() {
+  if (m_currentPath.isEmpty()) {
+    QMessageBox::warning(this, tr("No repository"),
+                         tr("Open a repository first."));
+    return;
+  }
+
+  const QString gitignorePath = m_currentPath + QStringLiteral("/.gitignore");
+
+  QDialog dlg(this);
+  dlg.setWindowTitle(tr("Edit .gitignore"));
+  auto *layout = new QVBoxLayout(&dlg);
+  auto *edit = new QTextEdit(&dlg);
+  edit->setFont(QFont(QStringLiteral("monospace"), 10));
+  layout->addWidget(edit);
+
+  QString content;
+  QFile file(gitignorePath);
+  if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    content = QString::fromUtf8(file.readAll());
+    file.close();
+  }
+  edit->setPlainText(content);
+
+  auto *buttons = new QDialogButtonBox(
+      QDialogButtonBox::Save | QDialogButtonBox::Cancel, &dlg);
+  layout->addWidget(buttons);
+  connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+  if (dlg.exec() == QDialog::Accepted) {
+    QFile out(gitignorePath);
+    if (out.open(QIODevice::WriteOnly | QIODevice::Text)) {
+      out.write(edit->toPlainText().toUtf8());
+      out.close();
+      loadWorkingTree();
+    } else {
+      QMessageBox::warning(this, tr("Error"),
+                           tr("Could not write .gitignore."));
+    }
   }
 }
