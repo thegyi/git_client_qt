@@ -61,6 +61,7 @@ private slots:
 
 private:
   void loadRepository(const QString &path);
+  void showHunkStaging(const QString &path, bool unstage);
   void restoreSettings();
   void savePullMode();
   void loadWorkingTree();

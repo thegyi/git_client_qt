@@ -23,12 +23,14 @@
 #include <QInputDialog>
 #include <QKeySequence>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QMap>
 #include <QMenu>
 #include <QMessageBox>
 #include <QProcess>
 #include <QSettings>
 #include <QShortcut>
+#include <QSplitter>
 #include <QStyle>
 #include <QTableWidget>
 #include <QTableWidgetItem>
@@ -1777,6 +1779,10 @@ void MainWindow::showUnstagedContextMenu(const QPoint &pos) {
   if (!isFolder) {
     blameAction = menu.addAction(tr("Blame"));
   }
+  QAction *stageHunksAction = nullptr;
+  if (!isFolder && hasTracked) {
+    stageHunksAction = menu.addAction(tr("Stage hunks"));
+  }
 
   QAction *selected = menu.exec(m_unstagedTree->mapToGlobal(pos));
   if (selected == stageAction) {
@@ -1811,6 +1817,8 @@ void MainWindow::showUnstagedContextMenu(const QPoint &pos) {
     loadWorkingTree();
   } else if (selected == blameAction) {
     showBlame(path);
+  } else if (selected == stageHunksAction) {
+    showHunkStaging(path, false);
   }
 }
 
@@ -1891,6 +1899,10 @@ void MainWindow::showStagedContextMenu(const QPoint &pos) {
   const QString path = itemPath(m_stagedTree, item);
   QAction *unstageAction =
       menu.addAction(isFolder ? tr("Unstage folder") : tr("Unstage file"));
+  QAction *unstageHunksAction = nullptr;
+  if (!isFolder) {
+    unstageHunksAction = menu.addAction(tr("Unstage hunks"));
+  }
   QAction *blameAction = nullptr;
   if (!isFolder) {
     blameAction = menu.addAction(tr("Blame"));
@@ -1900,6 +1912,8 @@ void MainWindow::showStagedContextMenu(const QPoint &pos) {
     if (execGit(m_currentPath, {"reset", "HEAD", "--", path})) {
       loadWorkingTree();
     }
+  } else if (selected == unstageHunksAction) {
+    showHunkStaging(path, true);
   } else if (selected == blameAction) {
     showBlame(path);
   }
@@ -2597,4 +2611,153 @@ void MainWindow::showRepositorySettings() {
   setConfig(QStringLiteral("core.autocrlf"), autocrlfCombo->currentText());
 
   statusBar()->showMessage(tr("Repository settings saved"));
+}
+
+void MainWindow::showHunkStaging(const QString &path, bool unstage) {
+  if (m_currentPath.isEmpty())
+    return;
+
+  QStringList args = QStringList{"-C", m_currentPath, "diff"};
+  if (unstage)
+    args.append("--cached");
+  args.append("--");
+  args.append(path);
+
+  QProcess p;
+  p.start("git", args);
+  if (!p.waitForFinished(10000) || p.exitCode() != 0)
+    return;
+
+  const QString raw = QString::fromLocal8Bit(p.readAllStandardOutput());
+  if (raw.isEmpty())
+    return;
+
+  const QStringList lines = raw.split('\n');
+
+  QList<int> hunkStarts;
+  const QRegularExpression hunkRe(
+      QStringLiteral("^@@ -(\\d+)(?:,(\\d+))? \\+(\\d+)(?:,(\\d+))? @@"));
+  for (int i = 0; i < lines.size(); ++i) {
+    if (hunkRe.match(lines[i]).hasMatch())
+      hunkStarts.append(i);
+  }
+
+  if (hunkStarts.isEmpty()) {
+    if (unstage)
+      execGit(m_currentPath, {"reset", "HEAD", "--", path});
+    else
+      execGit(m_currentPath, {"add", "--", path});
+    loadWorkingTree();
+    return;
+  }
+
+  const int firstHunk = hunkStarts.first();
+  QStringList headerLines;
+  for (int i = 0; i < firstHunk; ++i)
+    headerLines.append(lines[i]);
+
+  struct Hunk {
+    int start;
+    int end;
+  };
+  QList<Hunk> hunks;
+  for (int i = 0; i < hunkStarts.size(); ++i) {
+    int start = hunkStarts[i];
+    int end =
+        (i + 1 < hunkStarts.size()) ? hunkStarts[i + 1] - 1 : lines.size() - 1;
+    hunks.append({start, end});
+  }
+
+  QDialog dlg(this);
+  dlg.setWindowTitle(unstage ? tr("Unstage hunks - %1").arg(path)
+                             : tr("Stage hunks - %1").arg(path));
+  auto *layout = new QVBoxLayout(&dlg);
+
+  auto *list = new QListWidget(&dlg);
+  list->setStyleSheet(QStringLiteral(
+      "QListWidget { background-color: #1e1e1e; color: #d4d4d4; "
+      "font-family: monospace; }"
+      "QListWidget::item { padding: 4px; }"
+      "QListWidget::item:selected { background-color: #3c3c3c; }"));
+  list->setMinimumHeight(80);
+
+  auto *preview = new QTextEdit(&dlg);
+  preview->setReadOnly(true);
+  preview->setFont(QFont(QStringLiteral("monospace"), 10));
+
+  for (const Hunk &h : hunks) {
+    QStringList hunkLines;
+    for (int i = h.start; i <= h.end; ++i)
+      hunkLines.append(lines[i]);
+    auto *wi = new QListWidgetItem(lines[h.start], list);
+    wi->setFlags(wi->flags() | Qt::ItemIsUserCheckable);
+    wi->setCheckState(Qt::Checked);
+    wi->setData(Qt::UserRole, hunkLines.join(QLatin1Char('\n')));
+  }
+
+  auto updatePreview = [this, list, preview]() {
+    auto *wi = list->currentItem();
+    if (!wi)
+      return;
+    preview->setHtml(
+        formatDiff(wi->data(Qt::UserRole).toString().split(QLatin1Char('\n'))));
+  };
+  connect(list, &QListWidget::currentItemChanged, this, updatePreview);
+  list->setCurrentRow(0);
+  if (!hunks.isEmpty()) {
+    preview->setHtml(formatDiff(
+        lines.mid(hunks[0].start, hunks[0].end - hunks[0].start + 1)));
+  }
+
+  auto *splitter = new QSplitter(Qt::Vertical, &dlg);
+  splitter->addWidget(list);
+  splitter->addWidget(preview);
+  splitter->setStretchFactor(0, 0);
+  splitter->setStretchFactor(1, 1);
+  layout->addWidget(splitter);
+
+  auto *buttons = new QDialogButtonBox(
+      QDialogButtonBox::Apply | QDialogButtonBox::Cancel, &dlg);
+  layout->addWidget(buttons);
+  connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+  if (dlg.exec() != QDialog::Accepted)
+    return;
+
+  QStringList patchLines = headerLines;
+  for (int i = 0; i < list->count(); ++i) {
+    QListWidgetItem *wi = list->item(i);
+    if (wi->checkState() == Qt::Checked)
+      patchLines.append(
+          wi->data(Qt::UserRole).toString().split(QLatin1Char('\n')));
+  }
+
+  if (patchLines.size() == headerLines.size()) {
+    QMessageBox::information(this, tr("No hunks selected"),
+                             tr("Select at least one hunk to apply."));
+    return;
+  }
+
+  const QString patch = patchLines.join(QLatin1Char('\n')) + QLatin1Char('\n');
+
+  QTemporaryFile tempFile;
+  if (!tempFile.open()) {
+    QMessageBox::warning(this, tr("Error"), tr("Could not create patch file."));
+    return;
+  }
+  tempFile.write(patch.toUtf8());
+  tempFile.close();
+
+  const QStringList applyArgs =
+      unstage ? QStringList{"apply", "--cached", "-R", tempFile.fileName()}
+              : QStringList{"apply", "--cached", tempFile.fileName()};
+  if (execGit(m_currentPath, applyArgs)) {
+    loadWorkingTree();
+    statusBar()->showMessage(unstage ? tr("Hunks unstaged")
+                                     : tr("Hunks staged"));
+  } else {
+    statusBar()->showMessage(unstage ? tr("Failed to unstage hunks")
+                                     : tr("Failed to stage hunks"));
+  }
 }
