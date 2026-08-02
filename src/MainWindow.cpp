@@ -1982,6 +1982,7 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
   auto *diffAction = menu.addAction(tr("Diff with another commit"));
   auto *interactiveRebaseAction =
       menu.addAction(tr("Interactive rebase from here"));
+  auto *cherryPickAction = menu.addAction(tr("Cherry-pick this commit"));
   QAction *selected = menu.exec(m_commitTable->viewport()->mapToGlobal(pos));
 
   if (selected == checkoutAction) {
@@ -2026,6 +2027,11 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
 
   if (selected == interactiveRebaseAction) {
     showInteractiveRebase(sha);
+    return;
+  }
+
+  if (selected == cherryPickAction) {
+    cherryPickCommit(sha);
     return;
   }
 
@@ -2969,5 +2975,57 @@ void MainWindow::showInteractiveRebase(const QString &baseSha) {
     statusBar()->showMessage(tr("Interactive rebase completed"));
   } else {
     QMessageBox::warning(this, tr("Interactive rebase failed"), output);
+  }
+}
+
+void MainWindow::cherryPickCommit(const QString &sha) {
+  if (m_currentPath.isEmpty() || sha.isEmpty())
+    return;
+
+  QString output;
+  if (execGit(m_currentPath, {"cherry-pick", sha}, &output)) {
+    loadRepository(m_currentPath);
+    statusBar()->showMessage(tr("Cherry-picked %1").arg(sha.left(7)));
+    return;
+  }
+
+  const QStringList conflicted =
+      runGit(m_currentPath, {"diff", "--name-only", "--diff-filter=U"});
+  if (conflicted.isEmpty()) {
+    QMessageBox::warning(this, tr("Cherry-pick failed"), output);
+    return;
+  }
+
+  QMessageBox box(this);
+  box.setWindowTitle(tr("Cherry-pick has conflicts"));
+  box.setText(
+      tr("Resolve the conflicts in the working tree, then continue or abort."));
+  box.setDetailedText(conflicted.join(QLatin1Char('\n')));
+  auto *continueBtn = box.addButton(tr("Continue"), QMessageBox::AcceptRole);
+  auto *abortBtn = box.addButton(tr("Abort"), QMessageBox::RejectRole);
+  box.exec();
+
+  if (box.clickedButton() == continueBtn) {
+    QProcess p;
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert(QStringLiteral("GIT_EDITOR"), QStringLiteral("true"));
+    p.setProcessEnvironment(env);
+    p.start(QStringLiteral("git"),
+            QStringList{QStringLiteral("-C"), m_currentPath,
+                        QStringLiteral("cherry-pick"),
+                        QStringLiteral("--continue")});
+    if (p.waitForStarted(5000) && p.waitForFinished(120000) &&
+        p.exitStatus() == QProcess::NormalExit && p.exitCode() == 0) {
+      loadRepository(m_currentPath);
+      statusBar()->showMessage(tr("Cherry-pick completed"));
+    } else {
+      QMessageBox::warning(this, tr("Cherry-pick continue failed"),
+                           QString::fromLocal8Bit(p.readAllStandardError()));
+    }
+  } else if (box.clickedButton() == abortBtn) {
+    if (execGit(m_currentPath, {"cherry-pick", "--abort"})) {
+      loadRepository(m_currentPath);
+      statusBar()->showMessage(tr("Cherry-pick aborted"));
+    }
   }
 }

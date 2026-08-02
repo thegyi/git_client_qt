@@ -45,6 +45,7 @@ private slots:
   void showCommitContextMenu(const QPoint &pos);
   void showRemotesContextMenu(const QPoint &pos);
   void showInteractiveRebase(const QString &baseSha);
+  void cherryPickCommit(const QString &sha);
   void showSubmodulesContextMenu(const QPoint &pos);
   void onTagClicked(QTreeWidgetItem *item, int column);
   void onFileClicked(QTreeWidgetItem *item, int column);
