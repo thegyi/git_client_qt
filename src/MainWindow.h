@@ -60,6 +60,7 @@ private slots:
   void updateSubmodules();
   void addSubmodule();
   void openSubmodule();
+  void showReflog();
 
 private:
   void loadRepository(const QString &path);

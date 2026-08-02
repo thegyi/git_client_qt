@@ -97,6 +97,9 @@ MainWindow::MainWindow(QWidget *parent)
   connect(repoSettingsAction, &QAction::triggered, this,
           &MainWindow::showRepositorySettings);
 
+  auto *reflogAction = repositoryMenu->addAction(tr("Reflog"));
+  connect(reflogAction, &QAction::triggered, this, &MainWindow::showReflog);
+
   ui->actionOpen->setShortcut(QKeySequence::Open);
   ui->actionClose->setShortcut(QKeySequence::Close);
   ui->actionExit->setShortcut(QKeySequence::Quit);
@@ -3028,4 +3031,118 @@ void MainWindow::cherryPickCommit(const QString &sha) {
       statusBar()->showMessage(tr("Cherry-pick aborted"));
     }
   }
+}
+
+void MainWindow::showReflog() {
+  if (m_currentPath.isEmpty()) {
+    QMessageBox::warning(this, tr("No repository"),
+                         tr("Open a repository first."));
+    return;
+  }
+
+  const QStringList raw = runGit(m_currentPath, {QStringLiteral("reflog")});
+  if (raw.isEmpty()) {
+    QMessageBox::information(this, tr("No reflog"), tr("Reflog is empty."));
+    return;
+  }
+
+  struct ReflogEntry {
+    QString sha;
+    QString ref;
+    QString message;
+  };
+  QList<ReflogEntry> entries;
+  for (const QString &line : raw) {
+    const int firstSpace = line.indexOf(QLatin1Char(' '));
+    if (firstSpace < 0)
+      continue;
+    const QString sha = line.left(firstSpace);
+    const int colon = line.indexOf(QLatin1Char(':'), firstSpace);
+    if (colon < 0)
+      continue;
+    const QString ref =
+        line.mid(firstSpace + 1, colon - firstSpace - 1).trimmed();
+    const QString message = line.mid(colon + 1).trimmed();
+    entries.append({sha, ref, message});
+  }
+
+  QDialog dlg(this);
+  dlg.setWindowTitle(tr("Reflog"));
+  auto *layout = new QVBoxLayout(&dlg);
+  auto *table = new QTableWidget(entries.size(), 4, &dlg);
+  table->setHorizontalHeaderLabels(
+      {tr("SHA"), tr("Ref"), tr("Message"), tr("Action")});
+  table->setColumnWidth(0, 100);
+  table->setColumnWidth(1, 120);
+  table->setColumnWidth(3, 120);
+  table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
+  table->verticalHeader()->setVisible(false);
+
+  for (int i = 0; i < entries.size(); ++i) {
+    auto *shaItem = new QTableWidgetItem(entries[i].sha.left(7));
+    shaItem->setData(Qt::UserRole, entries[i].sha);
+    shaItem->setFlags(shaItem->flags() & ~Qt::ItemIsEditable);
+    table->setItem(i, 0, shaItem);
+    auto *refItem = new QTableWidgetItem(entries[i].ref);
+    refItem->setFlags(refItem->flags() & ~Qt::ItemIsEditable);
+    table->setItem(i, 1, refItem);
+    auto *msgItem = new QTableWidgetItem(entries[i].message);
+    msgItem->setFlags(msgItem->flags() & ~Qt::ItemIsEditable);
+    table->setItem(i, 2, msgItem);
+    auto *actionItem =
+        new QTableWidgetItem(entries[i].message.split(' ').value(0));
+    actionItem->setFlags(actionItem->flags() & ~Qt::ItemIsEditable);
+    table->setItem(i, 3, actionItem);
+  }
+  layout->addWidget(table);
+
+  table->setContextMenuPolicy(Qt::CustomContextMenu);
+  connect(table, &QTableWidget::customContextMenuRequested, this,
+          [this, table, &dlg](const QPoint &pos) {
+            auto *item = table->itemAt(pos);
+            if (!item)
+              return;
+            const int row = item->row();
+            const QString sha =
+                table->item(row, 0)->data(Qt::UserRole).toString();
+            QMenu menu(&dlg);
+            auto *checkoutAction =
+                menu.addAction(tr("Checkout %1").arg(sha.left(7)));
+            auto *resetAction =
+                menu.addAction(tr("Reset to %1").arg(sha.left(7)));
+            auto *branchAction =
+                menu.addAction(tr("Create branch from %1").arg(sha.left(7)));
+            QAction *selected = menu.exec(table->viewport()->mapToGlobal(pos));
+            if (!selected)
+              return;
+            if (selected == checkoutAction) {
+              if (execGit(m_currentPath, {"checkout", sha}))
+                loadRepository(m_currentPath);
+            } else if (selected == resetAction) {
+              if (QMessageBox::warning(
+                      this, tr("Reset"),
+                      tr("Reset the current branch to %1?").arg(sha.left(7)),
+                      QMessageBox::Yes | QMessageBox::No,
+                      QMessageBox::No) == QMessageBox::Yes) {
+                if (execGit(m_currentPath, {"reset", "--hard", sha}))
+                  loadRepository(m_currentPath);
+              }
+            } else if (selected == branchAction) {
+              bool ok;
+              const QString name = QInputDialog::getText(
+                  this, tr("Create Branch"), tr("Branch name:"),
+                  QLineEdit::Normal, QString(), &ok);
+              if (ok && !name.isEmpty()) {
+                if (execGit(m_currentPath, {"checkout", "-b", name, sha}))
+                  loadRepository(m_currentPath);
+              }
+            }
+          });
+
+  auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dlg);
+  layout->addWidget(buttons);
+  connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+  dlg.resize(900, 500);
+  dlg.exec();
 }
