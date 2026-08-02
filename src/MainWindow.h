@@ -10,6 +10,7 @@ class QIcon;
 class QPushButton;
 class QLineEdit;
 class QTextEdit;
+class QCheckBox;
 class QLabel;
 class QDockWidget;
 class QTreeWidget;
@@ -44,6 +45,7 @@ private slots:
   void onFileClicked(QTreeWidgetItem *item, int column);
   void onInitRepository();
   void onCommitClicked();
+  void onAmendToggled(int state);
 
 private:
   void loadRepository(const QString &path);
@@ -88,6 +90,7 @@ private:
   QLineEdit *m_commitSubject = nullptr;
   QTextEdit *m_commitBody = nullptr;
   QPushButton *m_commitButton = nullptr;
+  QCheckBox *m_amendCheckBox = nullptr;
   QLabel *m_branchLabel = nullptr;
   QPushButton *m_pushButton = nullptr;
   QPushButton *m_pullButton = nullptr;

@@ -6,6 +6,7 @@
 #include <QAbstractItemView>
 #include <QAction>
 #include <QApplication>
+#include <QCheckBox>
 #include <QDockWidget>
 #include <QFile>
 #include <QFileDialog>
@@ -211,6 +212,8 @@ MainWindow::MainWindow(QWidget *parent)
       "QTextEdit { color: #000000; background-color: #ffffff; }"));
   m_commitBody->setMaximumHeight(120);
   messageLayout->addWidget(m_commitBody);
+  m_amendCheckBox = new QCheckBox(tr("Amend last commit"), this);
+  messageLayout->addWidget(m_amendCheckBox);
   m_commitButton = new QPushButton(tr("Commit"), this);
   m_commitButton->setEnabled(false);
   messageLayout->addWidget(m_commitButton);
@@ -231,6 +234,9 @@ MainWindow::MainWindow(QWidget *parent)
           &MainWindow::onCommitClicked);
   connect(m_commitSubject, &QLineEdit::textChanged, this,
           &MainWindow::updateCommitButton);
+  if (m_amendCheckBox)
+    connect(m_amendCheckBox, &QCheckBox::stateChanged, this,
+            &MainWindow::onAmendToggled);
 
   rightDock->setWidget(rightWidget);
   rightDock->setTitleBarWidget(new QWidget(rightDock));
@@ -1131,7 +1137,32 @@ void MainWindow::updateCommitButton() {
   const bool hasMessage =
       m_commitSubject && !m_commitSubject->text().trimmed().isEmpty();
   const bool hasStaged = m_stagedTree && m_stagedTree->topLevelItemCount() > 0;
-  m_commitButton->setEnabled(hasMessage && hasStaged);
+  const bool amend = m_amendCheckBox && m_amendCheckBox->isChecked();
+  m_commitButton->setEnabled(hasMessage && (hasStaged || amend));
+}
+
+void MainWindow::onAmendToggled(int state) {
+  if (state == Qt::Checked && m_currentPath.isEmpty())
+    return;
+
+  if (state == Qt::Checked) {
+    const QStringList lines =
+        runGit(m_currentPath, {"log", "-1", "--format=%B"});
+    if (lines.isEmpty())
+      return;
+
+    if (m_commitSubject)
+      m_commitSubject->setText(lines.first());
+    if (m_commitBody) {
+      m_commitBody->setText(lines.mid(1).join('\n').trimmed());
+    }
+  } else {
+    if (m_commitSubject)
+      m_commitSubject->clear();
+    if (m_commitBody)
+      m_commitBody->clear();
+  }
+  updateCommitButton();
 }
 
 void MainWindow::updateFilter() {
@@ -1177,11 +1208,19 @@ void MainWindow::onCommitClicked() {
   tempFile.write(message.toUtf8());
   tempFile.close();
 
-  if (execGit(m_currentPath, {"commit", "-F", tempFile.fileName()})) {
+  const QStringList commitArgs =
+      (m_amendCheckBox && m_amendCheckBox->isChecked())
+          ? QStringList{"commit", "--amend", "-F", tempFile.fileName()}
+          : QStringList{"commit", "-F", tempFile.fileName()};
+  if (execGit(m_currentPath, commitArgs)) {
     m_commitSubject->clear();
     m_commitBody->clear();
+    if (m_amendCheckBox)
+      m_amendCheckBox->setChecked(false);
     loadRepository(m_currentPath);
-    statusBar()->showMessage(tr("Committed"));
+    statusBar()->showMessage((m_amendCheckBox && m_amendCheckBox->isChecked())
+                                 ? tr("Amended")
+                                 : tr("Committed"));
   } else {
     statusBar()->showMessage(tr("Commit failed"));
   }
