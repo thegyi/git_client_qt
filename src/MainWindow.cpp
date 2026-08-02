@@ -9,6 +9,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDesktopServices>
 #include <QDialogButtonBox>
 #include <QDockWidget>
 #include <QFile>
@@ -36,6 +37,7 @@
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
 
+#include <QDateTime>
 #include <QDialog>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -61,6 +63,12 @@ MainWindow::MainWindow(QWidget *parent)
 
   m_recentMenu = new QMenu(tr("Recent Repositories"), this);
   ui->menuFile->insertMenu(ui->actionClose, m_recentMenu);
+
+  auto *searchMenu = new QMenu(tr("Search"), this);
+  menuBar()->addMenu(searchMenu);
+  auto *grepAction = searchMenu->addAction(tr("Grep"));
+  grepAction->setShortcut(QKeySequence(QLatin1String("Ctrl+Shift+G")));
+  connect(grepAction, &QAction::triggered, this, &MainWindow::onGrepRequested);
 
   ui->actionOpen->setShortcut(QKeySequence::Open);
   ui->actionClose->setShortcut(QKeySequence::Close);
@@ -300,7 +308,9 @@ MainWindow::MainWindow(QWidget *parent)
   m_commitFilesTree = new QTreeWidget(this);
   m_commitFilesTree->setHeaderHidden(true);
   m_commitFilesTree->setRootIsDecorated(true);
-  m_commitFilesTree->setContextMenuPolicy(Qt::NoContextMenu);
+  m_commitFilesTree->setContextMenuPolicy(Qt::CustomContextMenu);
+  connect(m_commitFilesTree, &QTreeWidget::customContextMenuRequested, this,
+          &MainWindow::showCommitFilesContextMenu);
   connect(m_commitFilesTree, &QTreeWidget::itemClicked, this,
           &MainWindow::onCommitFileClicked);
   commitFilesLayout->addWidget(m_commitFilesTree);
@@ -327,6 +337,48 @@ MainWindow::MainWindow(QWidget *parent)
   m_diffView->setFont(QFont(QStringLiteral("monospace"), 10));
   m_diffView->setFrameStyle(QFrame::NoFrame);
   m_diffView->document()->setDocumentMargin(0);
+
+  m_grepDock = new QDockWidget(tr("Grep"), this);
+  m_grepDock->setMinimumHeight(200);
+  auto *grepWidget = new QWidget(this);
+  auto *grepLayout = new QVBoxLayout(grepWidget);
+  grepLayout->setContentsMargins(4, 4, 4, 4);
+  grepLayout->setSpacing(4);
+
+  auto *inputLayout = new QHBoxLayout();
+  inputLayout->setSpacing(4);
+  m_grepEdit = new QLineEdit(this);
+  m_grepEdit->setPlaceholderText(tr("Search pattern"));
+  m_grepEdit->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  inputLayout->addWidget(m_grepEdit);
+  auto *grepButton = new QPushButton(tr("Search"), this);
+  grepButton->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+  connect(grepButton, &QPushButton::clicked, this,
+          &MainWindow::onGrepRequested);
+  connect(m_grepEdit, &QLineEdit::returnPressed, this,
+          &MainWindow::onGrepRequested);
+  inputLayout->addWidget(grepButton);
+  grepLayout->addLayout(inputLayout);
+
+  m_grepResults = new QTreeWidget(this);
+  m_grepResults->setMinimumHeight(120);
+  m_grepResults->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+  m_grepResults->setColumnCount(3);
+  m_grepResults->setHeaderLabels(
+      QStringList{tr("File"), tr("Line"), tr("Match")});
+  m_grepResults->setRootIsDecorated(false);
+  m_grepResults->setContextMenuPolicy(Qt::NoContextMenu);
+  connect(m_grepResults, &QTreeWidget::itemActivated, this,
+          &MainWindow::onGrepResultActivated);
+  grepLayout->addWidget(m_grepResults);
+  grepLayout->setStretch(0, 0);
+  grepLayout->setStretch(1, 1);
+  m_grepDock->setWidget(grepWidget);
+  m_grepDock->setFeatures(QDockWidget::DockWidgetMovable |
+                          QDockWidget::DockWidgetFloatable);
+  m_grepDock->setVisible(false);
+  addDockWidget(Qt::RightDockWidgetArea, m_grepDock);
+  tabifyDockWidget(rightDock, m_grepDock);
   diffDock->setWidget(m_diffView);
   diffDock->setFeatures(QDockWidget::DockWidgetMovable |
                         QDockWidget::DockWidgetFloatable);
@@ -1260,6 +1312,46 @@ void MainWindow::onTagClicked(QTreeWidgetItem *item, int column) {
   }
 }
 
+void MainWindow::onGrepRequested() {
+  if (!m_grepEdit || !m_grepResults || !m_grepDock)
+    return;
+
+  m_grepDock->setVisible(true);
+  m_grepDock->raise();
+  m_grepEdit->setFocus();
+
+  const QString pattern = m_grepEdit->text();
+  if (pattern.isEmpty() || m_currentPath.isEmpty())
+    return;
+
+  m_grepResults->clear();
+  for (const QString &line :
+       runGit(m_currentPath, {"grep", "-n", "-I", pattern})) {
+    const int firstColon = line.indexOf(':');
+    if (firstColon < 0)
+      continue;
+    const int secondColon = line.indexOf(':', firstColon + 1);
+    if (secondColon < 0)
+      continue;
+    const QString filePath = m_currentPath + '/' + line.left(firstColon);
+    const QString lineNo =
+        line.mid(firstColon + 1, secondColon - firstColon - 1);
+    const QString match = line.mid(secondColon + 1);
+    auto *item = new QTreeWidgetItem(
+        m_grepResults, QStringList{line.left(firstColon), lineNo, match});
+    item->setData(0, Qt::UserRole, filePath);
+  }
+}
+
+void MainWindow::onGrepResultActivated(QTreeWidgetItem *item, int column) {
+  Q_UNUSED(column)
+  if (!item)
+    return;
+  const QString filePath = item->data(0, Qt::UserRole).toString();
+  if (!filePath.isEmpty())
+    QDesktopServices::openUrl(QUrl::fromLocalFile(filePath));
+}
+
 void MainWindow::addFileToTree(QTreeWidget *tree, const QString &filePath,
                                const QString &status) {
   const QStringList parts = filePath.split('/');
@@ -1603,6 +1695,10 @@ void MainWindow::showUnstagedContextMenu(const QPoint &pos) {
     ignoreAction = menu.addAction(
         isFolder ? tr("Ignore all files in this folder") : tr("Ignore"));
   }
+  QAction *blameAction = nullptr;
+  if (!isFolder) {
+    blameAction = menu.addAction(tr("Blame"));
+  }
 
   QAction *selected = menu.exec(m_unstagedTree->mapToGlobal(pos));
   if (selected == stageAction) {
@@ -1635,6 +1731,8 @@ void MainWindow::showUnstagedContextMenu(const QPoint &pos) {
       gitignore.close();
     }
     loadWorkingTree();
+  } else if (selected == blameAction) {
+    showBlame(path);
   }
 }
 
@@ -1715,10 +1813,17 @@ void MainWindow::showStagedContextMenu(const QPoint &pos) {
   const QString path = itemPath(m_stagedTree, item);
   QAction *unstageAction =
       menu.addAction(isFolder ? tr("Unstage folder") : tr("Unstage file"));
-  if (menu.exec(m_stagedTree->mapToGlobal(pos)) == unstageAction) {
+  QAction *blameAction = nullptr;
+  if (!isFolder) {
+    blameAction = menu.addAction(tr("Blame"));
+  }
+  QAction *selected = menu.exec(m_stagedTree->mapToGlobal(pos));
+  if (selected == unstageAction) {
     if (execGit(m_currentPath, {"reset", "HEAD", "--", path})) {
       loadWorkingTree();
     }
+  } else if (selected == blameAction) {
+    showBlame(path);
   }
 }
 
@@ -1740,6 +1845,7 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
   auto *createBranchAction =
       menu.addAction(tr("Create branch from this commit"));
   auto *createTagAction = menu.addAction(tr("Create Tag for this Commit"));
+  auto *diffAction = menu.addAction(tr("Diff with another commit"));
   QAction *selected = menu.exec(m_commitTable->viewport()->mapToGlobal(pos));
 
   if (selected == checkoutAction) {
@@ -1777,6 +1883,11 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
     return;
   }
 
+  if (selected == diffAction) {
+    diffWithCommit(sha);
+    return;
+  }
+
   if (selected != createTagAction)
     return;
 
@@ -1800,6 +1911,144 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
   } else {
     QMessageBox::warning(this, tr("Create tag failed"), output);
   }
+}
+
+void MainWindow::diffWithCommit(const QString &fromSha) {
+  if (!m_commitTable || !m_diffView || m_currentPath.isEmpty())
+    return;
+
+  QStringList items;
+  QStringList shas;
+  for (int row = 0; row < m_commitTable->rowCount(); ++row) {
+    QTableWidgetItem *shaItem = m_commitTable->item(row, 5);
+    if (!shaItem)
+      continue;
+    const QString sha = shaItem->data(Qt::UserRole).toString();
+    if (sha.isEmpty() || sha == fromSha)
+      continue;
+    QTableWidgetItem *msgItem = m_commitTable->item(row, 2);
+    const QString msg = msgItem ? msgItem->text() : QString();
+    items.append(QStringLiteral("%1 - %2").arg(sha.left(7), msg));
+    shas.append(sha);
+  }
+
+  if (items.isEmpty()) {
+    statusBar()->showMessage(tr("No other commits to compare"));
+    return;
+  }
+
+  bool ok = false;
+  const QString selected = QInputDialog::getItem(
+      this, tr("Diff with"), tr("Select commit:"), items, 0, false, &ok);
+  if (!ok)
+    return;
+
+  const int index = items.indexOf(selected);
+  if (index < 0 || index >= shas.size())
+    return;
+
+  const QString toSha = shas.at(index);
+  const QStringList diff = runGit(m_currentPath, {"diff", fromSha, toSha});
+  m_diffView->setHtml(diff.isEmpty() ? tr("No diff") : formatDiff(diff));
+  statusBar()->showMessage(
+      tr("Diff between %1 and %2").arg(fromSha.left(7), toSha.left(7)));
+}
+
+void MainWindow::showCommitFilesContextMenu(const QPoint &pos) {
+  QTreeWidgetItem *item = m_commitFilesTree->itemAt(pos);
+  if (!item || m_currentPath.isEmpty() || m_selectedCommitSha.isEmpty())
+    return;
+
+  if (item->childCount() > 0)
+    return;
+
+  const QString path = itemPath(m_commitFilesTree, item);
+  QMenu menu(this);
+  auto *blameAction = menu.addAction(tr("Blame"));
+  if (menu.exec(m_commitFilesTree->mapToGlobal(pos)) == blameAction)
+    showBlame(path, m_selectedCommitSha);
+}
+
+void MainWindow::showBlame(const QString &path, const QString &revision) {
+  if (m_currentPath.isEmpty() || path.isEmpty())
+    return;
+
+  QStringList args = {QStringLiteral("blame"), QStringLiteral("--porcelain")};
+  if (!revision.isEmpty())
+    args.append(revision);
+  args.append(QStringLiteral("--"));
+  args.append(path);
+
+  QDialog dlg(this);
+  dlg.setWindowTitle(tr("Blame %1").arg(path));
+  auto *layout = new QVBoxLayout(&dlg);
+  auto *view = new QTextEdit(&dlg);
+  view->setReadOnly(true);
+  view->setFont(QFont(QStringLiteral("monospace"), 10));
+  layout->addWidget(view);
+
+  QString currentSha;
+  QString currentAuthor;
+  QString currentSummary;
+  qint64 currentTime = 0;
+  int currentLine = 0;
+
+  QString html = QStringLiteral(
+      "<html>"
+      "<body style=\"background-color:#1e1e1e; color:#d4d4d4;\" >"
+      "<table width=\"100%\" cellspacing=\"0\" cellpadding=\"2\">");
+
+  const QRegularExpression hunkRe(
+      QStringLiteral("^(\\^?[0-9a-fA-F]{40}) (\\d+) (\\d+) (\\d+)$"));
+  for (const QString &line : runGit(m_currentPath, args)) {
+    const QRegularExpressionMatch m = hunkRe.match(line);
+    if (m.hasMatch()) {
+      currentSha = m.captured(1);
+      currentSha.remove(QLatin1Char('^'));
+      currentLine = m.captured(3).toInt();
+      currentAuthor.clear();
+      currentSummary.clear();
+      currentTime = 0;
+    } else if (line.startsWith(QStringLiteral("author "))) {
+      currentAuthor = line.mid(7);
+    } else if (line.startsWith(QStringLiteral("author-time "))) {
+      currentTime = line.mid(12).toLongLong();
+    } else if (line.startsWith(QStringLiteral("summary "))) {
+      currentSummary = line.mid(8);
+    } else if (line.startsWith(QLatin1Char('\t'))) {
+      const QString content = line.mid(1);
+      const QString date = currentTime > 0
+                               ? QDateTime::fromSecsSinceEpoch(currentTime)
+                                     .toString(QStringLiteral("yyyy-MM-dd"))
+                               : QString();
+      html +=
+          QStringLiteral(
+              "<tr>"
+              "<td style=\"white-space:nowrap; background-color:#252526; "
+              "color:#9cdcfe; padding-right:12px;\">%1</td>"
+              "<td style=\"white-space:nowrap; background-color:#252526; "
+              "color:#dcdcaa; padding-right:12px;\">%2</td>"
+              "<td style=\"white-space:nowrap; background-color:#252526; "
+              "color:#808080; padding-right:12px;\">%3</td>"
+              "<td style=\"white-space:nowrap; background-color:#1e1e1e; "
+              "color:#d4d4d4;\"><pre style=\"margin:0; font-family:monospace; "
+              "white-space:pre;\">%4</pre></td>"
+              "</tr>")
+              .arg(currentSha.left(7).toHtmlEscaped(),
+                   currentSummary.toHtmlEscaped(), date,
+                   content.toHtmlEscaped());
+      ++currentLine;
+    }
+  }
+
+  html += QStringLiteral("</table></body></html>");
+  view->setHtml(html);
+
+  auto *closeBtn = new QPushButton(tr("Close"), &dlg);
+  connect(closeBtn, &QPushButton::clicked, &dlg, &QDialog::accept);
+  layout->addWidget(closeBtn);
+  dlg.resize(1000, 700);
+  dlg.exec();
 }
 
 void MainWindow::onCommitSelected(QTableWidgetItem *item) {

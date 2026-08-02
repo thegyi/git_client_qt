@@ -41,6 +41,7 @@ private slots:
   void showTagContextMenu(const QPoint &pos);
   void showUnstagedContextMenu(const QPoint &pos);
   void showStagedContextMenu(const QPoint &pos);
+  void showCommitFilesContextMenu(const QPoint &pos);
   void showCommitContextMenu(const QPoint &pos);
   void showRemotesContextMenu(const QPoint &pos);
   void onTagClicked(QTreeWidgetItem *item, int column);
@@ -56,6 +57,10 @@ private:
   void restoreSettings();
   void savePullMode();
   void loadWorkingTree();
+  void onGrepRequested();
+  void diffWithCommit(const QString &fromSha);
+  void onGrepResultActivated(QTreeWidgetItem *item, int column);
+  void showBlame(const QString &path, const QString &revision = QString());
   void addFileToTree(QTreeWidget *tree, const QString &filePath,
                      const QString &status = QString());
   QIcon statusIcon(const QString &status) const;
@@ -106,6 +111,9 @@ private:
   QLineEdit *m_filterEdit = nullptr;
   QDockWidget *m_repoDock = nullptr;
   QDockWidget *m_workTreeDock = nullptr;
+  QDockWidget *m_grepDock = nullptr;
+  QLineEdit *m_grepEdit = nullptr;
+  QTreeWidget *m_grepResults = nullptr;
 };
 
 #endif // MAINWINDOW_H
