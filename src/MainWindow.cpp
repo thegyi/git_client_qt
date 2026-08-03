@@ -139,6 +139,13 @@ MainWindow::MainWindow(QWidget *parent)
   ui->actionPreferences->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Comma));
   ui->actionPreferences->setStatusTip(tr("Open application preferences"));
 
+  m_darkThemeAction = new QAction(tr("Dark Theme"), this);
+  m_darkThemeAction->setCheckable(true);
+  m_darkThemeAction->setStatusTip(tr("Toggle the dark color theme"));
+  ui->menuEdit->addAction(m_darkThemeAction);
+  connect(m_darkThemeAction, &QAction::toggled, this,
+          &MainWindow::setDarkTheme);
+
   m_branchLabel = new QLabel(this);
   statusBar()->addPermanentWidget(m_branchLabel);
 
@@ -742,6 +749,9 @@ MainWindow::~MainWindow() {
 
 void MainWindow::restoreSettings() {
   QSettings settings("GitClientQt", "GitClientQt");
+  if (m_darkThemeAction)
+    m_darkThemeAction->setChecked(settings.value("darkTheme", false).toBool());
+
   if (settings.value("reopenLastRepo", true).toBool()) {
     const QString lastRepo = settings.value("lastRepo").toString();
     if (!lastRepo.isEmpty() && m_currentPath.isEmpty())
@@ -834,6 +844,52 @@ void MainWindow::restoreDockAndColumnState() {
         settings.value(QStringLiteral("headers/commitTable")).toByteArray();
     if (!headerState.isEmpty())
       m_commitTable->horizontalHeader()->restoreState(headerState);
+  }
+}
+
+void MainWindow::setDarkTheme(bool enabled) {
+  QSettings settings("GitClientQt", "GitClientQt");
+  settings.setValue("darkTheme", enabled);
+
+  if (enabled) {
+    QPalette darkPalette;
+    darkPalette.setColor(QPalette::Window, QColor(45, 45, 48));
+    darkPalette.setColor(QPalette::WindowText, Qt::white);
+    darkPalette.setColor(QPalette::Base, QColor(30, 30, 30));
+    darkPalette.setColor(QPalette::AlternateBase, QColor(45, 45, 48));
+    darkPalette.setColor(QPalette::ToolTipBase, QColor(45, 45, 48));
+    darkPalette.setColor(QPalette::ToolTipText, Qt::white);
+    darkPalette.setColor(QPalette::Text, Qt::white);
+    darkPalette.setColor(QPalette::Button, QColor(45, 45, 48));
+    darkPalette.setColor(QPalette::ButtonText, Qt::white);
+    darkPalette.setColor(QPalette::BrightText, Qt::red);
+    darkPalette.setColor(QPalette::Link, QColor(42, 130, 218));
+    darkPalette.setColor(QPalette::Highlight, QColor(42, 130, 218));
+    darkPalette.setColor(QPalette::HighlightedText, Qt::white);
+    qApp->setPalette(darkPalette);
+    qApp->setStyleSheet(QStringLiteral(
+        "QMainWindow::separator { background: #808080; width: 4px; }"
+        "QMenu::item { padding: 6px 24px 6px 12px; color: #ffffff; }"
+        "QMenu::item:selected { background-color: #3c3c3c; }"
+        "QMenuBar { color: #ffffff; }"
+        "QMenuBar::item:selected { background-color: #3c3c3c; }"
+        "QToolTip { color: #ffffff; background-color: #2a82da; "
+        "border: 1px solid white; }"));
+    if (m_commitSubject)
+      m_commitSubject->setStyleSheet(QStringLiteral(
+          "QLineEdit { color: #ffffff; background-color: #3c3c3c; }"));
+    if (m_commitBody)
+      m_commitBody->setStyleSheet(QStringLiteral(
+          "QTextEdit { color: #ffffff; background-color: #3c3c3c; }"));
+  } else {
+    qApp->setPalette(qApp->style()->standardPalette());
+    qApp->setStyleSheet(QString());
+    if (m_commitSubject)
+      m_commitSubject->setStyleSheet(QStringLiteral(
+          "QLineEdit { color: #000000; background-color: #ffffff; }"));
+    if (m_commitBody)
+      m_commitBody->setStyleSheet(QStringLiteral(
+          "QTextEdit { color: #000000; background-color: #ffffff; }"));
   }
 }
 

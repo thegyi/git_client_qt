@@ -74,6 +74,7 @@ private:
   void loadWorkingTree();
   void saveDockAndColumnState();
   void restoreDockAndColumnState();
+  void setDarkTheme(bool enabled);
   void onGrepRequested();
   void diffWithCommit(const QString &fromSha);
   void onGrepResultActivated(QTreeWidgetItem *item, int column);
@@ -136,6 +137,7 @@ private:
   QPushButton *m_undoButton = nullptr;
   QToolButton *m_pullButton = nullptr;
   QMenu *m_recentMenu = nullptr;
+  QAction *m_darkThemeAction = nullptr;
   QStringList m_pullArgs;
   QStringList m_pushArgs;
   bool m_commitTableWidthInitialized = false;
