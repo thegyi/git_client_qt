@@ -1,5 +1,10 @@
 #include "MainWindow.h"
+#include "GitExecutor.h"
 #include "ui_MainWindow.h"
+#include "widgets/CommitTableWidget.h"
+#include "widgets/DiffViewWidget.h"
+#include "widgets/FileTreeWidget.h"
+#include "widgets/RepoPanelWidget.h"
 
 #include <QDebug>
 
@@ -58,6 +63,7 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QRegularExpressionMatch>
+#include <QStatusBar>
 #include <QTemporaryFile>
 #include <QTextEdit>
 #include <QToolBar>
@@ -65,6 +71,11 @@
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent), ui(new Ui::MainWindow) {
+  m_gitExecutor = new GitExecutor(this);
+  m_gitRepository = new GitRepository(m_gitExecutor, this);
+  m_diffPresenter = new DiffPresenter(this);
+  m_commitModel = new CommitModel(this);
+  m_workingTreeModel = new WorkingTreeModel(this);
   ui->setupUi(this);
   setStyleSheet("QMainWindow::separator { background: #808080; width: 4px; }"
                 "QMenu::item { padding: 6px 24px 6px 12px; }");
@@ -247,7 +258,7 @@ MainWindow::MainWindow(QWidget *parent)
     if (QMessageBox::question(this, tr("Undo last commit"),
                               tr("Undo the last commit and keep changes "
                                  "staged?")) == QMessageBox::Yes) {
-      if (execGit(m_currentPath, {"reset", "--soft", "HEAD~1"})) {
+      if (m_gitExecutor->exec(m_currentPath, {"reset", "--soft", "HEAD~1"})) {
         loadRepository(m_currentPath);
         statusBar()->showMessage(tr("Undone last commit"));
       } else {
@@ -310,7 +321,7 @@ MainWindow::MainWindow(QWidget *parent)
   connect(fetchFromAction, &QAction::triggered, this, [this] {
     if (m_currentPath.isEmpty())
       return;
-    const QStringList remotes = runGit(m_currentPath, {"remote"});
+    const QStringList remotes = m_gitExecutor->run(m_currentPath, {"remote"});
     if (remotes.isEmpty()) {
       QMessageBox::warning(this, tr("No remotes"),
                            tr("There are no remotes to fetch from."));
@@ -320,7 +331,7 @@ MainWindow::MainWindow(QWidget *parent)
     const QString remote = QInputDialog::getItem(
         this, tr("Fetch from Remote"), tr("Remote:"), remotes, 0, false, &ok);
     if (ok && !remote.isEmpty()) {
-      if (execGit(m_currentPath, {"fetch", remote})) {
+      if (m_gitExecutor->exec(m_currentPath, {"fetch", remote})) {
         loadRepository(m_currentPath);
         statusBar()->showMessage(tr("Fetched from %1").arg(remote));
       } else {
@@ -357,16 +368,19 @@ MainWindow::MainWindow(QWidget *parent)
     if (m_currentPath.isEmpty())
       return;
     QString output;
-    if (execGit(m_currentPath, m_pushArgs, &output)) {
+    if (m_gitExecutor->exec(m_currentPath, m_pushArgs, &output)) {
       const QString currentBranch =
-          runGit(m_currentPath, {"rev-parse", "--abbrev-ref", "HEAD"}).value(0);
+          m_gitExecutor
+              ->run(m_currentPath, {"rev-parse", "--abbrev-ref", "HEAD"})
+              .value(0);
       const QString remote =
-          runGit(
-              m_currentPath,
-              {"config", QStringLiteral("branch.%1.remote").arg(currentBranch)})
+          m_gitExecutor
+              ->run(m_currentPath,
+                    {"config",
+                     QStringLiteral("branch.%1.remote").arg(currentBranch)})
               .value(0);
       if (!remote.isEmpty() && !currentBranch.isEmpty())
-        execGit(m_currentPath, {"fetch", remote});
+        m_gitExecutor->exec(m_currentPath, {"fetch", remote});
       loadRepository(m_currentPath);
       statusBar()->showMessage(m_pushButton->text());
     } else {
@@ -408,25 +422,30 @@ MainWindow::MainWindow(QWidget *parent)
     QStringList pullArgs = m_pullArgs;
     if (m_pullArgs.first() != QLatin1String("fetch")) {
       const QString currentBranch =
-          runGit(m_currentPath, {"rev-parse", "--abbrev-ref", "HEAD"}).value(0);
+          m_gitExecutor
+              ->run(m_currentPath, {"rev-parse", "--abbrev-ref", "HEAD"})
+              .value(0);
       if (currentBranch.isEmpty()) {
         QMessageBox::warning(this, tr("Pull failed"), tr("No current branch"));
         return;
       }
       const QString remote =
-          runGit(
-              m_currentPath,
-              {"config", QStringLiteral("branch.%1.remote").arg(currentBranch)})
+          m_gitExecutor
+              ->run(m_currentPath,
+                    {"config",
+                     QStringLiteral("branch.%1.remote").arg(currentBranch)})
               .value(0);
       QString merge =
-          runGit(
-              m_currentPath,
-              {"config", QStringLiteral("branch.%1.merge").arg(currentBranch)})
+          m_gitExecutor
+              ->run(m_currentPath,
+                    {"config",
+                     QStringLiteral("branch.%1.merge").arg(currentBranch)})
               .value(0);
       if (merge.startsWith(QLatin1String("refs/heads/")))
         merge.remove(0, 11);
       if (remote.isEmpty() || merge.isEmpty()) {
-        const QStringList remotes = runGit(m_currentPath, {"remote"});
+        const QStringList remotes =
+            m_gitExecutor->run(m_currentPath, {"remote"});
         if (remotes.isEmpty()) {
           QMessageBox::warning(this, tr("No remote"),
                                tr("There is no remote to pull from."));
@@ -485,24 +504,7 @@ MainWindow::MainWindow(QWidget *parent)
     savePullMode();
   });
 
-  m_commitTable = new QTableWidget(this);
-  m_commitTable->setColumnCount(7);
-  m_commitTable->setHorizontalHeaderLabels(
-      {tr("Graph"), tr("Date/Time"), tr("Date"), tr("Commit Message"),
-       tr("Author"), tr("Branches"), tr("SHA")});
-  m_commitTable->horizontalHeader()->setVisible(false);
-  m_commitTable->setSelectionBehavior(QAbstractItemView::SelectRows);
-  m_commitTable->setSelectionMode(QAbstractItemView::SingleSelection);
-  m_commitTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-  m_commitTable->verticalHeader()->setVisible(false);
-  m_commitTable->horizontalHeader()->setSectionResizeMode(
-      QHeaderView::Interactive);
-  m_commitTable->setShowGrid(true);
-  m_commitTable->setStyleSheet(
-      QStringLiteral("QTableView { gridline-color: #555555; }"));
-  m_commitTable->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-  m_commitTable->setAlternatingRowColors(true);
-  m_commitTable->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+  m_commitTable = new CommitTableWidget(this);
   connect(m_commitTable, &QTableWidget::cellClicked, this,
           [this](int row, int column) {
             Q_UNUSED(column)
@@ -513,13 +515,7 @@ MainWindow::MainWindow(QWidget *parent)
           &MainWindow::showCommitContextMenu);
   setCentralWidget(m_commitTable);
 
-  m_repoPanel = new QTreeWidget(this);
-  m_repoPanel->setObjectName(QStringLiteral("repoPanel"));
-  m_repoPanel->setHeaderHidden(true);
-  m_repoPanel->setRootIsDecorated(true);
-  m_repoPanel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-  m_repoPanel->setMinimumWidth(80);
-  m_repoPanel->setContextMenuPolicy(Qt::CustomContextMenu);
+  m_repoPanel = new RepoPanelWidget(this);
   connect(
       m_repoPanel, &QTreeWidget::customContextMenuRequested, this,
       [this](const QPoint &pos) {
@@ -574,10 +570,7 @@ MainWindow::MainWindow(QWidget *parent)
 
   auto *unstagedGroup = new QGroupBox(tr("Unstaged Files"), this);
   auto *unstagedLayout = new QVBoxLayout(unstagedGroup);
-  m_unstagedTree = new QTreeWidget(this);
-  m_unstagedTree->setHeaderLabels(QStringList{tr("Unstaged Files")});
-  m_unstagedTree->setRootIsDecorated(true);
-  m_unstagedTree->setContextMenuPolicy(Qt::CustomContextMenu);
+  m_unstagedTree = new FileTreeWidget(tr("Unstaged Files"), this);
   connect(m_unstagedTree, &QTreeWidget::customContextMenuRequested, this,
           &MainWindow::showUnstagedContextMenu);
   connect(m_unstagedTree, &QTreeWidget::itemClicked, this,
@@ -588,10 +581,7 @@ MainWindow::MainWindow(QWidget *parent)
 
   auto *stagedGroup = new QGroupBox(tr("Staged Files"), this);
   auto *stagedLayout = new QVBoxLayout(stagedGroup);
-  m_stagedTree = new QTreeWidget(this);
-  m_stagedTree->setHeaderLabels(QStringList{tr("Staged Files")});
-  m_stagedTree->setRootIsDecorated(true);
-  m_stagedTree->setContextMenuPolicy(Qt::CustomContextMenu);
+  m_stagedTree = new FileTreeWidget(tr("Staged Files"), this);
   connect(m_stagedTree, &QTreeWidget::customContextMenuRequested, this,
           &MainWindow::showStagedContextMenu);
   connect(m_stagedTree, &QTreeWidget::itemClicked, this,
@@ -628,10 +618,7 @@ MainWindow::MainWindow(QWidget *parent)
 
   auto *commitFilesGroup = new QGroupBox(tr("Commit Files"), this);
   auto *commitFilesLayout = new QVBoxLayout(commitFilesGroup);
-  m_commitFilesTree = new QTreeWidget(this);
-  m_commitFilesTree->setHeaderHidden(true);
-  m_commitFilesTree->setRootIsDecorated(true);
-  m_commitFilesTree->setContextMenuPolicy(Qt::CustomContextMenu);
+  m_commitFilesTree = new FileTreeWidget(QString(), this);
   connect(m_commitFilesTree, &QTreeWidget::customContextMenuRequested, this,
           &MainWindow::showCommitFilesContextMenu);
   connect(m_commitFilesTree, &QTreeWidget::itemClicked, this,
@@ -656,8 +643,7 @@ MainWindow::MainWindow(QWidget *parent)
 
   auto *diffDock = new QDockWidget(tr("Diff"), this);
   diffDock->setObjectName(QStringLiteral("diffDock"));
-  m_diffView = new QTextEdit(this);
-  m_diffView->setReadOnly(true);
+  m_diffView = new DiffViewWidget(this);
   m_diffView->setMinimumHeight(120);
   m_diffView->setFont(QFont(QStringLiteral("monospace"), 10));
   m_diffView->setFrameStyle(QFrame::NoFrame);
@@ -716,7 +702,7 @@ MainWindow::MainWindow(QWidget *parent)
         QFileDialog::getExistingDirectory(this, tr("Open Repository"));
     if (path.isEmpty())
       return;
-    if (execGit(path, {"rev-parse", "--git-dir"})) {
+    if (m_gitExecutor->exec(path, {"rev-parse", "--git-dir"})) {
       loadRepository(path);
     } else {
       QMessageBox::warning(this, tr("Not a Git repository"),
@@ -1027,51 +1013,30 @@ void MainWindow::updateRecentRepos() {
   });
 }
 
-QStringList MainWindow::runGit(const QString &path, const QStringList &args,
-                               int acceptedExitCode) const {
-  QProcess p;
-  p.start("git", QStringList{"-C", path} + args);
-  if (!p.waitForFinished(10000)) {
-    return {};
-  }
-  const int code = p.exitCode();
-  if (code != 0 && code != acceptedExitCode) {
-    return {};
-  }
-  return QString::fromLocal8Bit(p.readAllStandardOutput().trimmed())
-      .split('\n', Qt::SkipEmptyParts);
-}
-
 bool MainWindow::repositoryStateChanged() const {
   if (m_currentPath.isEmpty())
     return true;
-  const QString head = runGit(m_currentPath, {"rev-parse", "HEAD"}).value(0);
-  const QString upstream =
-      runGit(m_currentPath, {"rev-parse", "@{u}"}).value(0);
-  const QString status =
-      runGit(m_currentPath, {"status", "--porcelain"}).join('\n');
-  const QString tags = runGit(m_currentPath, {"tag", "--list"}).join('\n');
-  const QString signature = head + '|' + upstream + '|' + status + '|' + tags;
-  return signature != m_lastRepoSignature;
+  return m_gitRepository->stateSignature() != m_lastRepoSignature;
 }
 
 void MainWindow::loadRepository(const QString &path) {
   if (path.isEmpty())
     return;
-  if (runGit(path, {"rev-parse", "--git-dir"}).isEmpty()) {
+  m_gitRepository->setPath(path);
+  if (!m_gitRepository->isValid()) {
     statusBar()->showMessage(tr("Not a git repository: %1").arg(path));
     return;
   }
 
   const bool isInitialLoad = m_currentPath.isEmpty();
-  const QString repoRoot =
-      runGit(path, {"rev-parse", "--show-toplevel"}).value(0);
+  const QString repoRoot = m_gitRepository->root();
   if (repoRoot.isEmpty()) {
     statusBar()->showMessage(
         tr("Could not determine repository root for %1").arg(path));
     return;
   }
   m_currentPath = repoRoot;
+  m_gitRepository->setPath(m_currentPath);
   if (m_watcher) {
     m_watcher->removePaths(m_watcher->directories());
     m_watcher->removePaths(m_watcher->files());
@@ -1111,18 +1076,19 @@ void MainWindow::loadRepository(const QString &path) {
     m_pullButton->setEnabled(true);
   if (m_signCommitCheckBox) {
     const QString gpgSign =
-        runGit(path, {"config", "--bool", "commit.gpgsign"}).value(0);
+        m_gitExecutor->run(path, {"config", "--bool", "commit.gpgsign"})
+            .value(0);
     m_signCommitCheckBox->setChecked(gpgSign == QLatin1String("true"));
   }
   m_repoPanel->clear();
 
   const QString currentBranch =
-      runGit(path, {"rev-parse", "--abbrev-ref", "HEAD"}).value(0);
+      m_gitExecutor->run(path, {"rev-parse", "--abbrev-ref", "HEAD"}).value(0);
 
   m_localBranchesItem =
       new QTreeWidgetItem(m_repoPanel, {tr("Local Branches")});
   for (const QString &branch :
-       runGit(path, {"branch", "--format=%(refname:short)"})) {
+       m_gitExecutor->run(path, {"branch", "--format=%(refname:short)"})) {
     auto *item = new QTreeWidgetItem(m_localBranchesItem, QStringList{branch});
     if (branch == currentBranch) {
       QFont font = item->font(0);
@@ -1135,8 +1101,8 @@ void MainWindow::loadRepository(const QString &path) {
   m_remoteBranchesItem =
       new QTreeWidgetItem(m_repoPanel, {tr("Remote Branches")});
   QMap<QString, QTreeWidgetItem *> remoteGroups;
-  for (const QString &branch :
-       runGit(path, {"branch", "-r", "--format=%(refname:short)"})) {
+  for (const QString &branch : m_gitExecutor->run(
+           path, {"branch", "-r", "--format=%(refname:short)"})) {
     const QString remote = branch.section('/', 0, 0);
     const QString branchName = branch.section('/', 1);
     if (branchName.isEmpty() || branchName == "HEAD") {
@@ -1160,13 +1126,14 @@ void MainWindow::loadRepository(const QString &path) {
   m_remotesItem->setExpanded(true);
 
   m_tagsItem = new QTreeWidgetItem(m_repoPanel, {tr("Tags")});
-  for (const QString &tag : runGit(path, {"tag", "--list"})) {
+  for (const QString &tag : m_gitExecutor->run(path, {"tag", "--list"})) {
     new QTreeWidgetItem(m_tagsItem, QStringList{tag});
   }
   m_tagsItem->setExpanded(true);
 
   m_submodulesItem = new QTreeWidgetItem(m_repoPanel, {tr("Submodules")});
-  for (const QString &line : runGit(path, {"submodule", "status"})) {
+  for (const QString &line :
+       m_gitExecutor->run(path, {"submodule", "status"})) {
     if (line.length() < 2)
       continue;
     const QChar status = line.at(0);
@@ -1201,7 +1168,8 @@ void MainWindow::loadRepository(const QString &path) {
   m_commitTable->horizontalHeader()->setVisible(true);
 
   QMap<QString, int> wipCounts;
-  for (const QString &line : runGit(path, {"status", "--porcelain"})) {
+  for (const QString &line :
+       m_gitExecutor->run(path, {"status", "--porcelain"})) {
     if (line.length() < 2)
       continue;
     const QChar indexStatus = line.at(0);
@@ -1239,7 +1207,7 @@ void MainWindow::loadRepository(const QString &path) {
       if (!wipCounts.contains(status))
         continue;
       auto *iconLabel = new QLabel(wipWidget);
-      iconLabel->setPixmap(statusIcon(status).pixmap(12, 12));
+      iconLabel->setPixmap(FileTreeWidget::statusIcon(status).pixmap(12, 12));
       wipLayout->addWidget(iconLabel);
       wipLayout->addWidget(
           new QLabel(QString::number(wipCounts.value(status)), wipWidget));
@@ -1267,21 +1235,23 @@ void MainWindow::loadRepository(const QString &path) {
     const QString output =
         QString::fromLocal8Bit(p.readAllStandardOutput().trimmed());
 
-    m_localHeadSha = runGit(path, {"rev-parse", "HEAD"}).value(0);
+    m_localHeadSha = m_gitExecutor->run(path, {"rev-parse", "HEAD"}).value(0);
     m_remoteBranchName =
-        runGit(path, {"rev-parse", "--abbrev-ref", "@{u}"}).value(0);
+        m_gitExecutor->run(path, {"rev-parse", "--abbrev-ref", "@{u}"})
+            .value(0);
     m_remoteHeadSha =
         !m_remoteBranchName.isEmpty()
-            ? runGit(path, {"rev-parse", m_remoteBranchName}).value(0)
+            ? m_gitExecutor->run(path, {"rev-parse", m_remoteBranchName})
+                  .value(0)
             : QString();
     m_unpushedShas.clear();
     m_unpulledShas.clear();
     if (!m_remoteBranchName.isEmpty()) {
-      for (const QString &sha :
-           runGit(path, {"log", "--format=%H", m_remoteBranchName + "..HEAD"}))
+      for (const QString &sha : m_gitExecutor->run(
+               path, {"log", "--format=%H", m_remoteBranchName + "..HEAD"}))
         m_unpushedShas.insert(sha);
-      for (const QString &sha :
-           runGit(path, {"log", "--format=%H", "HEAD.." + m_remoteBranchName}))
+      for (const QString &sha : m_gitExecutor->run(
+               path, {"log", "--format=%H", "HEAD.." + m_remoteBranchName}))
         m_unpulledShas.insert(sha);
     }
 
@@ -1295,44 +1265,22 @@ void MainWindow::loadRepository(const QString &path) {
       m_branchLabel->setText(branchText);
     }
 
-    for (const QString &record :
-         output.split(QChar(0x1e), Qt::SkipEmptyParts)) {
-      const QStringList fields =
-          record.trimmed().split(QChar(0x1f), Qt::KeepEmptyParts);
-      if (fields.size() < 9) {
-        continue;
-      }
+    m_commitModel->loadLog(output);
 
-      const QString graph = fields.at(0);
-      const QString fullSha = fields.at(1);
-      const QString shortSha = fields.at(2);
-      const QString author = fields.at(3);
-      const QString date = fields.at(4);
-      const QString relative = fields.at(5);
-      QString subject = fields.at(6);
-      subject.remove("[skip ci]", Qt::CaseInsensitive);
-      subject = subject.trimmed();
-      const QString body = fields.at(7).trimmed();
-      QString branchName = fields.at(8);
-      if (branchName.startsWith("refs/heads/")) {
-        branchName = branchName.mid(11);
-      } else if (branchName.startsWith("refs/remotes/")) {
-        branchName = branchName.mid(13);
-      } else if (branchName.startsWith("refs/tags/")) {
-        branchName = branchName.mid(10);
-      }
+    for (int r = 0; r < m_commitModel->rowCount(); ++r) {
+      const Commit &c = m_commitModel->commit(r);
 
       QString markers;
-      if (fullSha == m_localHeadSha)
+      if (c.fullSha == m_localHeadSha)
         markers += " [HEAD]";
-      if (!m_remoteBranchName.isEmpty() && fullSha == m_remoteHeadSha)
+      if (!m_remoteBranchName.isEmpty() && c.fullSha == m_remoteHeadSha)
         markers += " [" + m_remoteBranchName + "]";
-      if (m_unpushedShas.contains(fullSha))
+      if (m_unpushedShas.contains(c.fullSha))
         markers += " ↑";
-      if (m_unpulledShas.contains(fullSha))
+      if (m_unpulledShas.contains(c.fullSha))
         markers += " ↓";
 
-      QString preview = subject;
+      QString preview = c.subject;
       if (preview.length() > 60) {
         preview = preview.left(60) + "...";
       }
@@ -1340,23 +1288,23 @@ void MainWindow::loadRepository(const QString &path) {
 
       const QString tip =
           tr("Subject: %1\n\n%2\n\nDate: %3\nAuthor: %4\nSHA: %5 (%6)")
-              .arg(subject)
-              .arg(body)
-              .arg(date)
-              .arg(author)
-              .arg(shortSha)
-              .arg(fullSha);
+              .arg(c.subject)
+              .arg(c.body)
+              .arg(c.date)
+              .arg(c.author)
+              .arg(c.shortSha)
+              .arg(c.fullSha);
 
       QBrush bgBrush;
-      if (m_unpushedShas.contains(fullSha))
+      if (m_unpushedShas.contains(c.fullSha))
         bgBrush = QBrush(QColor(225, 255, 225));
-      else if (m_unpulledShas.contains(fullSha))
+      else if (m_unpulledShas.contains(c.fullSha))
         bgBrush = QBrush(QColor(255, 240, 225));
 
       const int row = m_commitTable->rowCount();
       m_commitTable->insertRow(row);
 
-      auto *graphItem = new QTableWidgetItem(graph);
+      auto *graphItem = new QTableWidgetItem(c.graph);
       graphItem->setToolTip(tip);
       QFont graphFont;
       graphFont.setStyleHint(QFont::Monospace);
@@ -1366,13 +1314,13 @@ void MainWindow::loadRepository(const QString &path) {
         graphItem->setBackground(bgBrush);
       m_commitTable->setItem(row, 0, graphItem);
 
-      auto *dateTimeItem = new QTableWidgetItem(date);
+      auto *dateTimeItem = new QTableWidgetItem(c.date);
       dateTimeItem->setToolTip(tip);
       if (bgBrush != QBrush())
         dateTimeItem->setBackground(bgBrush);
       m_commitTable->setItem(row, 1, dateTimeItem);
 
-      auto *relativeDateItem = new QTableWidgetItem(relative);
+      auto *relativeDateItem = new QTableWidgetItem(c.relative);
       relativeDateItem->setToolTip(tip);
       if (bgBrush != QBrush())
         relativeDateItem->setBackground(bgBrush);
@@ -1384,20 +1332,20 @@ void MainWindow::loadRepository(const QString &path) {
         msgItem->setBackground(bgBrush);
       m_commitTable->setItem(row, 3, msgItem);
 
-      auto *authorItem = new QTableWidgetItem(author);
+      auto *authorItem = new QTableWidgetItem(c.author);
       authorItem->setToolTip(tip);
       if (bgBrush != QBrush())
         authorItem->setBackground(bgBrush);
       m_commitTable->setItem(row, 4, authorItem);
 
-      auto *branchItem = new QTableWidgetItem(branchName);
+      auto *branchItem = new QTableWidgetItem(c.branch);
       branchItem->setToolTip(tip);
       if (bgBrush != QBrush())
         branchItem->setBackground(bgBrush);
       m_commitTable->setItem(row, 5, branchItem);
 
-      auto *shaItem = new QTableWidgetItem(shortSha);
-      shaItem->setData(Qt::UserRole, fullSha);
+      auto *shaItem = new QTableWidgetItem(c.shortSha);
+      shaItem->setData(Qt::UserRole, c.fullSha);
       shaItem->setToolTip(tip);
       QFont shaFont;
       shaFont.setStyleHint(QFont::Monospace);
@@ -1432,37 +1380,14 @@ void MainWindow::loadRepository(const QString &path) {
 
   loadWorkingTree();
 
-  const QString upstream = runGit(path, {"rev-parse", "@{u}"}).value(0);
-  m_lastRepoSignature = m_localHeadSha + '|' + upstream + '|' +
-                        runGit(path, {"status", "--porcelain"}).join('\n') +
-                        '|' + runGit(path, {"tag", "--list"}).join('\n');
+  const QString upstream =
+      m_gitExecutor->run(path, {"rev-parse", "@{u}"}).value(0);
+  m_lastRepoSignature =
+      m_localHeadSha + '|' + upstream + '|' +
+      m_gitExecutor->run(path, {"status", "--porcelain"}).join('\n') + '|' +
+      m_gitExecutor->run(path, {"tag", "--list"}).join('\n');
 
   statusBar()->showMessage(tr("Loaded: %1").arg(path));
-}
-
-bool MainWindow::execGit(const QString &path, const QStringList &args,
-                         QString *output) const {
-  QProcess p;
-  p.start("git", QStringList{"-C", path} + args);
-  if (!p.waitForStarted(5000)) {
-    if (output)
-      *output = tr("Failed to start git: %1").arg(p.errorString());
-    return false;
-  }
-  if (!p.waitForFinished(30000)) {
-    p.kill();
-    p.waitForFinished(1000);
-    if (output) {
-      *output = tr("Git command timed out or was killed.\n%1")
-                    .arg(QString::fromLocal8Bit(p.readAllStandardOutput() +
-                                                p.readAllStandardError()));
-    }
-    return false;
-  }
-  if (output)
-    *output = QString::fromLocal8Bit(p.readAllStandardOutput() +
-                                     p.readAllStandardError());
-  return p.exitCode() == 0;
 }
 
 void MainWindow::launchGitTool(const QStringList &args, bool reload) {
@@ -1476,7 +1401,7 @@ void MainWindow::launchGitTool(const QStringList &args, bool reload) {
   else if (command == QStringLiteral("mergetool"))
     configKey = QStringLiteral("merge.tool");
   if (!configKey.isEmpty() &&
-      runGit(m_currentPath, {"config", configKey}).isEmpty()) {
+      m_gitExecutor->run(m_currentPath, {"config", configKey}).isEmpty()) {
     statusBar()->showMessage(
         tr("No %1 configured in Repository Settings").arg(configKey));
     return;
@@ -1528,7 +1453,8 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
         menu.addAction(tr("Create branch from %1").arg(branchName));
     auto *renameAction = menu.addAction(tr("Rename"));
     const QString currentBranch =
-        runGit(m_currentPath, {"rev-parse", "--abbrev-ref", "HEAD"}).value(0);
+        m_gitExecutor->run(m_currentPath, {"rev-parse", "--abbrev-ref", "HEAD"})
+            .value(0);
     auto *mergeAction =
         (branchName != currentBranch)
             ? menu.addAction(tr("Merge %1 into current").arg(branchName))
@@ -1544,13 +1470,13 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
     }
 
     if (selected == switchAction) {
-      if (execGit(m_currentPath, {"checkout", branchName})) {
+      if (m_gitExecutor->exec(m_currentPath, {"checkout", branchName})) {
         loadRepository(m_currentPath);
       } else {
         statusBar()->showMessage(tr("Failed to switch to %1").arg(branchName));
       }
     } else if (selected == pushAction) {
-      const QStringList remotes = runGit(m_currentPath, {"remote"});
+      const QStringList remotes = m_gitExecutor->run(m_currentPath, {"remote"});
       if (remotes.isEmpty()) {
         QMessageBox::warning(this, tr("No remotes"),
                              tr("There are no remotes to push to."));
@@ -1573,7 +1499,7 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
       const QString ref = (destBranch == branchName)
                               ? branchName
                               : branchName + ":" + destBranch;
-      if (execGit(m_currentPath, {"push", "-u", remote, ref})) {
+      if (m_gitExecutor->exec(m_currentPath, {"push", "-u", remote, ref})) {
         loadRepository(m_currentPath);
         statusBar()->showMessage(
             tr("Pushed %1 to %2/%3").arg(branchName, remote, destBranch));
@@ -1582,7 +1508,7 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
       }
     } else if (selected == setUpstreamAction) {
       const QStringList remoteBranchesRaw =
-          runGit(m_currentPath, {"branch", "-r"});
+          m_gitExecutor->run(m_currentPath, {"branch", "-r"});
       QStringList remoteBranches;
       for (const QString &line : remoteBranchesRaw) {
         if (line.contains(QLatin1String(" -> ")))
@@ -1600,8 +1526,8 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
                                 remoteBranches, 0, false, &ok);
       if (!ok || upstream.isEmpty())
         return;
-      if (execGit(m_currentPath,
-                  {"branch", "--set-upstream-to", upstream, branchName})) {
+      if (m_gitExecutor->exec(m_currentPath, {"branch", "--set-upstream-to",
+                                              upstream, branchName})) {
         loadRepository(m_currentPath);
         statusBar()->showMessage(
             tr("Upstream set for %1 to %2").arg(branchName, upstream));
@@ -1615,7 +1541,8 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
           QInputDialog::getText(this, tr("Create Branch"), tr("Branch name:"),
                                 QLineEdit::Normal, QString(), &ok);
       if (ok && !newName.isEmpty()) {
-        if (execGit(m_currentPath, {"branch", newName, branchName})) {
+        if (m_gitExecutor->exec(m_currentPath,
+                                {"branch", newName, branchName})) {
           loadRepository(m_currentPath);
         } else {
           statusBar()->showMessage(tr("Failed to create branch %1 from %2")
@@ -1628,7 +1555,8 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
           QInputDialog::getText(this, tr("Rename Branch"), tr("New name:"),
                                 QLineEdit::Normal, branchName, &ok);
       if (ok && !newName.isEmpty() && newName != branchName) {
-        if (execGit(m_currentPath, {"branch", "-m", branchName, newName})) {
+        if (m_gitExecutor->exec(m_currentPath,
+                                {"branch", "-m", branchName, newName})) {
           loadRepository(m_currentPath);
         } else {
           statusBar()->showMessage(tr("Failed to rename %1").arg(branchName));
@@ -1636,11 +1564,12 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
       }
     } else if (selected == mergeAction) {
       QString output;
-      if (execGit(m_currentPath,
-                  {"merge", "-m",
-                   tr("Merge branch %1 into %2").arg(branchName, currentBranch),
-                   branchName},
-                  &output)) {
+      if (m_gitExecutor->exec(
+              m_currentPath,
+              {"merge", "-m",
+               tr("Merge branch %1 into %2").arg(branchName, currentBranch),
+               branchName},
+              &output)) {
         loadRepository(m_currentPath);
         statusBar()->showMessage(
             tr("Merged %1 into %2").arg(branchName, currentBranch));
@@ -1648,8 +1577,8 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
         QMessageBox::warning(this, tr("Merge failed"), output);
       }
     } else if (selected == rebaseAction) {
-      QStringList branches =
-          runGit(m_currentPath, {"branch", "--format=%(refname:short)"});
+      QStringList branches = m_gitExecutor->run(
+          m_currentPath, {"branch", "--format=%(refname:short)"});
       branches.removeOne(branchName);
       if (branches.isEmpty()) {
         QMessageBox::warning(this, tr("No target branch"),
@@ -1665,8 +1594,8 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
         return;
 
       QString output;
-      if (execGit(m_currentPath, {"rebase", targetBranch, branchName},
-                  &output)) {
+      if (m_gitExecutor->exec(m_currentPath,
+                              {"rebase", targetBranch, branchName}, &output)) {
         loadRepository(m_currentPath);
         statusBar()->showMessage(
             tr("Rebased %1 onto %2").arg(branchName, targetBranch));
@@ -1674,7 +1603,7 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
         QMessageBox::warning(this, tr("Rebase failed"), output);
       }
     } else if (selected == deleteAction) {
-      if (execGit(m_currentPath, {"branch", "-d", branchName})) {
+      if (m_gitExecutor->exec(m_currentPath, {"branch", "-d", branchName})) {
         loadRepository(m_currentPath);
       } else {
         statusBar()->showMessage(tr("Failed to delete %1").arg(branchName));
@@ -1697,8 +1626,8 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
           this, tr("Checkout Remote Branch"), tr("Local branch name:"),
           QLineEdit::Normal, branchName, &ok);
       if (ok && !localName.isEmpty()) {
-        if (execGit(m_currentPath,
-                    {"checkout", "-b", localName, fullBranchName})) {
+        if (m_gitExecutor->exec(
+                m_currentPath, {"checkout", "-b", localName, fullBranchName})) {
           loadRepository(m_currentPath);
         } else {
           statusBar()->showMessage(
@@ -1708,7 +1637,8 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
     } else if (selected == deleteRemoteAction) {
       const QString remote = item->parent()->text(0);
       const QString rbranch = branchName;
-      if (execGit(m_currentPath, {"push", remote, "--delete", rbranch})) {
+      if (m_gitExecutor->exec(m_currentPath,
+                              {"push", remote, "--delete", rbranch})) {
         loadRepository(m_currentPath);
       } else {
         statusBar()->showMessage(
@@ -1736,7 +1666,7 @@ void MainWindow::showStashContextMenu(const QPoint &pos) {
     if (!ok || message.isEmpty())
       return;
 
-    if (execGit(m_currentPath, {"stash", "push", "-m", message})) {
+    if (m_gitExecutor->exec(m_currentPath, {"stash", "push", "-m", message})) {
       loadRepository(m_currentPath);
       statusBar()->showMessage(tr("Stash created"));
     } else {
@@ -1759,21 +1689,21 @@ void MainWindow::showStashContextMenu(const QPoint &pos) {
   QAction *selected = menu.exec(m_repoPanel->viewport()->mapToGlobal(pos));
 
   if (selected == popAction) {
-    if (execGit(m_currentPath, {"stash", "pop", ref})) {
+    if (m_gitExecutor->exec(m_currentPath, {"stash", "pop", ref})) {
       loadRepository(m_currentPath);
       statusBar()->showMessage(tr("Stash popped"));
     } else {
       statusBar()->showMessage(tr("Failed to pop stash"));
     }
   } else if (selected == applyAction) {
-    if (execGit(m_currentPath, {"stash", "apply", ref})) {
+    if (m_gitExecutor->exec(m_currentPath, {"stash", "apply", ref})) {
       loadRepository(m_currentPath);
       statusBar()->showMessage(tr("Stash applied"));
     } else {
       statusBar()->showMessage(tr("Failed to apply stash"));
     }
   } else if (selected == deleteAction) {
-    if (execGit(m_currentPath, {"stash", "drop", ref})) {
+    if (m_gitExecutor->exec(m_currentPath, {"stash", "drop", ref})) {
       loadStashes();
       statusBar()->showMessage(tr("Stash deleted"));
     } else {
@@ -1799,7 +1729,8 @@ void MainWindow::onBranchClicked(QTreeWidgetItem *item, int column) {
     return;
   }
 
-  const QString sha = runGit(m_currentPath, {"rev-parse", branch}).value(0);
+  const QString sha =
+      m_gitExecutor->run(m_currentPath, {"rev-parse", branch}).value(0);
   if (sha.isEmpty())
     return;
 
@@ -1836,7 +1767,7 @@ void MainWindow::showTagContextMenu(const QPoint &pos) {
                                tr("Tag names cannot contain spaces."));
         } else {
           QString output;
-          if (execGit(m_currentPath, {"tag", tagName}, &output)) {
+          if (m_gitExecutor->exec(m_currentPath, {"tag", tagName}, &output)) {
             loadRepository(m_currentPath);
             statusBar()->showMessage(tr("Tag %1 created").arg(tagName));
           } else {
@@ -1854,14 +1785,14 @@ void MainWindow::showTagContextMenu(const QPoint &pos) {
 
     if (selected == checkoutAction) {
       QString output;
-      if (execGit(m_currentPath, {"checkout", tagName}, &output)) {
+      if (m_gitExecutor->exec(m_currentPath, {"checkout", tagName}, &output)) {
         loadRepository(m_currentPath);
         statusBar()->showMessage(tr("Checked out tag %1").arg(tagName));
       } else {
         QMessageBox::warning(this, tr("Checkout failed"), output);
       }
     } else if (selected == pushAction) {
-      const QStringList remotes = runGit(m_currentPath, {"remote"});
+      const QStringList remotes = m_gitExecutor->run(m_currentPath, {"remote"});
       if (remotes.isEmpty()) {
         QMessageBox::warning(this, tr("No remotes"),
                              tr("There are no remotes to push to."));
@@ -1871,7 +1802,7 @@ void MainWindow::showTagContextMenu(const QPoint &pos) {
             QInputDialog::getItem(this, tr("Push Tag %1").arg(tagName),
                                   tr("Remote:"), remotes, 0, false, &okRemote);
         if (okRemote && !remote.isEmpty()) {
-          if (execGit(m_currentPath, {"push", remote, tagName})) {
+          if (m_gitExecutor->exec(m_currentPath, {"push", remote, tagName})) {
             statusBar()->showMessage(
                 tr("Pushed tag %1 to %2").arg(tagName, remote));
           } else {
@@ -1880,7 +1811,7 @@ void MainWindow::showTagContextMenu(const QPoint &pos) {
         }
       }
     } else if (selected == deleteAction) {
-      if (execGit(m_currentPath, {"tag", "-d", tagName})) {
+      if (m_gitExecutor->exec(m_currentPath, {"tag", "-d", tagName})) {
         loadRepository(m_currentPath);
         statusBar()->showMessage(tr("Tag %1 deleted").arg(tagName));
       } else {
@@ -1901,7 +1832,8 @@ void MainWindow::onTagClicked(QTreeWidgetItem *item, int column) {
   const QString tagName = item->text(0);
   qDebug() << "onTagClicked: tagName=" << tagName;
   const QString sha =
-      runGit(m_currentPath, {"log", "-1", tagName, "--format=%H"}).value(0);
+      m_gitExecutor->run(m_currentPath, {"log", "-1", tagName, "--format=%H"})
+          .value(0);
   qDebug() << "onTagClicked: resolved sha=" << sha
            << "tableRows=" << m_commitTable->rowCount();
   if (sha.isEmpty()) {
@@ -1938,7 +1870,7 @@ void MainWindow::onGrepRequested() {
 
   m_grepResults->clear();
   for (const QString &line :
-       runGit(m_currentPath, {"grep", "-n", "-I", pattern})) {
+       m_gitExecutor->run(m_currentPath, {"grep", "-n", "-I", pattern})) {
     const int firstColon = line.indexOf(':');
     if (firstColon < 0)
       continue;
@@ -1964,84 +1896,6 @@ void MainWindow::onGrepResultActivated(QTreeWidgetItem *item, int column) {
     QDesktopServices::openUrl(QUrl::fromLocalFile(filePath));
 }
 
-void MainWindow::addFileToTree(QTreeWidget *tree, const QString &filePath,
-                               const QString &status) {
-  const QStringList parts = filePath.split('/');
-  const QString fileName = parts.last();
-  if (fileName.isEmpty()) {
-    return;
-  }
-  QTreeWidgetItem *parentItem = tree->invisibleRootItem();
-  for (int i = 0; i < parts.size() - 1; ++i) {
-    const QString &dirName = parts.at(i);
-    QTreeWidgetItem *child = nullptr;
-    for (int c = 0; c < parentItem->childCount(); ++c) {
-      if (parentItem->child(c)->text(0) == dirName) {
-        child = parentItem->child(c);
-        break;
-      }
-    }
-    if (!child) {
-      child = new QTreeWidgetItem(parentItem, QStringList{dirName});
-      child->setIcon(0, statusIcon(QString()));
-    }
-    parentItem = child;
-  }
-  QTreeWidgetItem *leaf =
-      new QTreeWidgetItem(parentItem, QStringList{fileName});
-  leaf->setIcon(0, statusIcon(status));
-  if (!status.isEmpty()) {
-    leaf->setData(0, Qt::UserRole, status);
-  }
-}
-
-QIcon MainWindow::statusIcon(const QString &status) const {
-  if (status.isEmpty())
-    return QApplication::style()->standardIcon(QStyle::SP_DirIcon);
-
-  QPixmap pixmap(16, 16);
-  pixmap.fill(Qt::transparent);
-
-  QPainter painter(&pixmap);
-  painter.setRenderHint(QPainter::Antialiasing);
-
-  if (status == "?" || status == "A") {
-    QPen pen(QColor(40, 167, 69));
-    pen.setWidth(2);
-    pen.setCapStyle(Qt::RoundCap);
-    painter.setPen(pen);
-    painter.drawLine(8, 4, 8, 12);
-    painter.drawLine(4, 8, 12, 8);
-  } else if (status == "M") {
-    QPen pen(QColor(0, 123, 255));
-    pen.setWidth(2);
-    pen.setCapStyle(Qt::RoundCap);
-    painter.setPen(pen);
-    painter.drawLine(5, 13, 11, 5);
-    QPolygonF tip;
-    tip << QPointF(11, 5) << QPointF(12, 4) << QPointF(13, 5) << QPointF(12, 6);
-    painter.setBrush(QColor(0, 123, 255));
-    painter.setPen(Qt::NoPen);
-    painter.drawPolygon(tip);
-    QPolygonF eraser;
-    eraser << QPointF(5, 13) << QPointF(4, 14) << QPointF(5, 15)
-           << QPointF(6, 14);
-    painter.drawPolygon(eraser);
-  } else if (status == "D") {
-    QPen pen(QColor(220, 53, 69));
-    pen.setWidth(2);
-    pen.setCapStyle(Qt::RoundCap);
-    painter.setPen(pen);
-    painter.drawLine(4, 8, 12, 8);
-  } else {
-    painter.setBrush(QColor(160, 160, 160));
-    painter.setPen(Qt::NoPen);
-    painter.drawEllipse(pixmap.rect().adjusted(2, 2, -2, -2));
-  }
-
-  return QIcon(pixmap);
-}
-
 void MainWindow::loadWorkingTree() {
   if (m_unstagedTree)
     m_unstagedTree->clear();
@@ -2051,25 +1905,17 @@ void MainWindow::loadWorkingTree() {
     return;
   }
 
-  for (const QString &line :
-       runGit(m_currentPath, {"diff", "--cached", "--name-status"})) {
-    const QStringList parts = line.split('\t');
-    if (parts.isEmpty())
-      continue;
-    addFileToTree(m_stagedTree, parts.last(), parts.first().left(1));
-  }
+  m_workingTreeModel->load(
+      m_gitExecutor->run(m_currentPath, {"diff", "--cached", "--name-status"}),
+      m_gitExecutor->run(m_currentPath, {"diff", "--name-status"}),
+      m_gitExecutor->run(m_currentPath,
+                         {"ls-files", "--others", "--exclude-standard"}));
 
-  for (const QString &line : runGit(m_currentPath, {"diff", "--name-status"})) {
-    const QStringList parts = line.split('\t');
-    if (parts.isEmpty())
-      continue;
-    addFileToTree(m_unstagedTree, parts.last(), parts.first().left(1));
-  }
+  for (const FileStatus &fs : m_workingTreeModel->stagedFiles())
+    m_stagedTree->addFile(fs.first, fs.second);
 
-  for (const QString &filePath :
-       runGit(m_currentPath, {"ls-files", "--others", "--exclude-standard"})) {
-    addFileToTree(m_unstagedTree, filePath, QStringLiteral("?"));
-  }
+  for (const FileStatus &fs : m_workingTreeModel->unstagedFiles())
+    m_unstagedTree->addFile(fs.first, fs.second);
 
   if (m_stagedTree)
     m_stagedTree->collapseAll();
@@ -2094,7 +1940,7 @@ void MainWindow::onAmendToggled(int state) {
 
   if (state == Qt::Checked) {
     const QStringList lines =
-        runGit(m_currentPath, {"log", "-1", "--format=%B"});
+        m_gitExecutor->run(m_currentPath, {"log", "-1", "--format=%B"});
     if (lines.isEmpty())
       return;
 
@@ -2161,7 +2007,8 @@ void MainWindow::onCommitClicked() {
           : QStringList{"commit", "-F", tempFile.fileName()};
   if (m_signCommitCheckBox && m_signCommitCheckBox->isChecked()) {
     QString signingKey =
-        runGit(m_currentPath, {"config", "user.signingkey"}).value(0);
+        m_gitExecutor->run(m_currentPath, {"config", "user.signingkey"})
+            .value(0);
     if (signingKey.isEmpty()) {
       QSettings appSettings("GitClientQt", "GitClientQt");
       signingKey = appSettings.value("gpgSigningKey").toString().trimmed();
@@ -2172,11 +2019,12 @@ void MainWindow::onCommitClicked() {
       if (signingKey.isEmpty())
         return;
       signingKey = signingKey.trimmed();
-      execGit(m_currentPath, {"config", "user.signingkey", signingKey});
+      m_gitExecutor->exec(m_currentPath,
+                          {"config", "user.signingkey", signingKey});
     }
     commitArgs << QStringLiteral("--gpg-sign=%1").arg(signingKey);
   }
-  if (execGit(m_currentPath, commitArgs)) {
+  if (m_gitExecutor->exec(m_currentPath, commitArgs)) {
     m_commitSubject->clear();
     m_commitBody->clear();
     if (m_amendCheckBox)
@@ -2190,52 +2038,15 @@ void MainWindow::onCommitClicked() {
   }
 }
 
-QString MainWindow::itemPath(QTreeWidget *tree, QTreeWidgetItem *item) const {
-  QStringList parts;
-  QTreeWidgetItem *current = item;
-  while (current && current != tree->invisibleRootItem()) {
-    parts.prepend(current->text(0));
-    current = current->parent();
-  }
-  return parts.join('/');
-}
-
-QString MainWindow::emptyStateHtml(const QString &title,
-                                   const QString &message) const {
-  return QStringLiteral(
-             "<html>"
-             "<body style=\"background-color:#1e1e1e; color:#aaaaaa;\">"
-             "<div style=\"padding:20px; text-align:center;\">"
-             "<h3 style=\"margin:0 0 10px 0;\">%1</h3>"
-             "<p style=\"margin:0;\">%2</p>"
-             "</div>"
-             "</body>"
-             "</html>")
-      .arg(title.toHtmlEscaped(), message.toHtmlEscaped());
-}
-
-QString MainWindow::errorStateHtml(const QString &message) const {
-  return QStringLiteral(
-             "<html>"
-             "<body style=\"background-color:#1e1e1e; color:#ff6b6b;\">"
-             "<div style=\"padding:20px; text-align:center;\">"
-             "<h3 style=\"margin:0 0 10px 0;\">%1</h3>"
-             "<p style=\"margin:0;\">%2</p>"
-             "</div>"
-             "</body>"
-             "</html>")
-      .arg(tr("Error").toHtmlEscaped(), message.toHtmlEscaped());
-}
-
 void MainWindow::showEmptyDiff() {
   if (m_diffView)
-    m_diffView->setHtml(emptyStateHtml(
-        tr("No diff"), tr("Select a file or commit to view the diff.")));
+    m_diffView->showEmpty(tr("No diff"),
+                          tr("Select a file or commit to view the diff."));
 }
 
 void MainWindow::showErrorDiff(const QString &message) {
   if (m_diffView)
-    m_diffView->setHtml(errorStateHtml(message));
+    m_diffView->showError(message);
 }
 
 void MainWindow::showEmptyCommitFiles() {
@@ -2258,116 +2069,6 @@ void MainWindow::showErrorCommitFiles(const QString &message) {
   placeholder->setFlags(Qt::NoItemFlags);
 }
 
-QString MainWindow::formatDiff(const QStringList &lines) const {
-  QString html = QStringLiteral(
-      "<html>"
-      "<body style=\"background-color:#1e1e1e\">"
-      "<table width=\"100%\" cellspacing=\"0\" cellpadding=\"0\">");
-
-  int oldLine = -1;
-  int newLine = -1;
-  QRegularExpression hunkRe(
-      QStringLiteral("@@ -(\\d+)(?:,\\d+)? [+](\\d+)(?:,\\d+)? @@"));
-
-  for (const QString &line : lines) {
-    if (line.startsWith(QStringLiteral("@@"))) {
-      const QRegularExpressionMatch m = hunkRe.match(line);
-      if (m.hasMatch()) {
-        oldLine = m.captured(1).toInt();
-        newLine = m.captured(2).toInt();
-      }
-      html +=
-          QStringLiteral("<tr><td colspan=\"2\" "
-                         "style=\"background-color:#3c3c3c; color:#aaaaaa;\">"
-                         "<pre style=\"margin:0\">") +
-          line.toHtmlEscaped() + QStringLiteral("</pre></td></tr>");
-      continue;
-    }
-
-    if (line.startsWith(QStringLiteral("diff --git")) ||
-        line.startsWith(QStringLiteral("index ")) ||
-        line.startsWith(QStringLiteral("--- ")) ||
-        line.startsWith(QStringLiteral("+++ "))) {
-      html +=
-          QStringLiteral("<tr><td colspan=\"2\" "
-                         "style=\"background-color:#3c3c3c; color:#aaaaaa;\">"
-                         "<pre style=\"margin:0\">") +
-          line.toHtmlEscaped() + QStringLiteral("</pre></td></tr>");
-      continue;
-    }
-
-    QString bg;
-    QString fg;
-    QString lineNum = QStringLiteral("&nbsp;");
-    const QString content = line.toHtmlEscaped();
-
-    if (line.startsWith('+') && !line.startsWith(QStringLiteral("+++ "))) {
-      bg = QStringLiteral("#1e4d2b");
-      fg = QStringLiteral("#d4edda");
-      lineNum = QString::number(newLine++);
-    } else if (line.startsWith('-') &&
-               !line.startsWith(QStringLiteral("--- "))) {
-      bg = QStringLiteral("#4d1e1e");
-      fg = QStringLiteral("#f8d7da");
-      lineNum = QString::number(oldLine++);
-    } else {
-      bg = QStringLiteral("#2b2b2b");
-      fg = QStringLiteral("#cccccc");
-      if (newLine >= 0)
-        lineNum = QString::number(newLine++);
-      else if (oldLine >= 0)
-        lineNum = QString::number(oldLine++);
-    }
-
-    html += QStringLiteral("<tr>"
-                           "<td align=\"right\" "
-                           "style=\"width:45px; background-color:#2b2b2b; "
-                           "color:#888888;\">"
-                           "<pre style=\"margin:0\">") +
-            lineNum +
-            QStringLiteral("</pre></td>"
-                           "<td style=\"background-color:") +
-            bg + QStringLiteral("; color:") + fg +
-            QStringLiteral("; padding-left:4px;\">"
-                           "<pre style=\"margin:0\">") +
-            content + QStringLiteral("</pre></td></tr>");
-  }
-
-  html += QStringLiteral("</table></body></html>");
-  return html;
-}
-
-bool MainWindow::diffIsLfsPointer(const QStringList &lines) const {
-  for (const QString &line : lines) {
-    const QString trimmed = line.trimmed();
-    if (trimmed.startsWith(
-            QStringLiteral("version https://git-lfs.github.com/spec/v1")))
-      return true;
-  }
-  return false;
-}
-
-QString MainWindow::lfsPointerHtml(const QStringList &lines) const {
-  QString oid;
-  QString size;
-  for (const QString &raw : lines) {
-    const QString line = raw.trimmed();
-    if (line.startsWith(QStringLiteral("oid ")))
-      oid = line.mid(4).trimmed();
-    else if (line.startsWith(QStringLiteral("size ")))
-      size = line.mid(5).trimmed();
-  }
-  return QStringLiteral(
-             "<html>"
-             "<body style=\"background-color:#1e1e1e; color:#cccccc; "
-             "font-family:sans-serif; padding:16px;\">"
-             "<h2>Git LFS pointer</h2>"
-             "<p><b>OID:</b> %1</p>"
-             "<p><b>Size:</b> %2 bytes</p>"
-             "</body></html>")
-      .arg(oid.toHtmlEscaped(), size.toHtmlEscaped());
-}
-
 void MainWindow::showUnstagedContextMenu(const QPoint &pos) {
   QTreeWidgetItem *item = m_unstagedTree->itemAt(pos);
   if (!item || m_currentPath.isEmpty()) {
@@ -2375,7 +2076,7 @@ void MainWindow::showUnstagedContextMenu(const QPoint &pos) {
   }
 
   const bool isFolder = item->childCount() > 0;
-  const QString path = itemPath(m_unstagedTree, item);
+  const QString path = m_unstagedTree->itemPath(item);
 
   QList<QTreeWidgetItem *> leaves;
   QList<QTreeWidgetItem *> stack;
@@ -2427,7 +2128,7 @@ void MainWindow::showUnstagedContextMenu(const QPoint &pos) {
   }
   QAction *externalDiffAction = nullptr;
   if (!isFolder && hasTracked &&
-      !runGit(m_currentPath, {"config", "diff.tool"}).isEmpty()) {
+      !m_gitExecutor->run(m_currentPath, {"config", "diff.tool"}).isEmpty()) {
     externalDiffAction = menu.addAction(tr("Open in external diff tool"));
   }
 
@@ -2435,22 +2136,22 @@ void MainWindow::showUnstagedContextMenu(const QPoint &pos) {
   if (!selected)
     return;
   if (selected == stageAction) {
-    if (execGit(m_currentPath, {"add", path})) {
+    if (m_gitExecutor->exec(m_currentPath, {"add", path})) {
       loadWorkingTree();
     }
   } else if (selected == stashAction) {
-    if (execGit(m_currentPath,
-                {"stash", "push", "-m", "Stash " + path, "--", path})) {
+    if (m_gitExecutor->exec(m_currentPath, {"stash", "push", "-m",
+                                            "Stash " + path, "--", path})) {
       loadWorkingTree();
       loadStashes();
     }
   } else if (selected == discardAction) {
     bool ok = true;
     if (hasTracked) {
-      ok &= execGit(m_currentPath, {"checkout", "--", path});
+      ok &= m_gitExecutor->exec(m_currentPath, {"checkout", "--", path});
     }
     if (hasNew) {
-      ok &= execGit(m_currentPath, {"clean", "-fd", "--", path});
+      ok &= m_gitExecutor->exec(m_currentPath, {"clean", "-fd", "--", path});
     }
     if (ok) {
       loadWorkingTree();
@@ -2499,7 +2200,7 @@ void MainWindow::showRemotesContextMenu(const QPoint &pos) {
                               QLineEdit::Normal, QString(), &okUrl);
     if (!okUrl || url.isEmpty())
       return;
-    if (execGit(m_currentPath, {"remote", "add", name, url})) {
+    if (m_gitExecutor->exec(m_currentPath, {"remote", "add", name, url})) {
       loadRemotes();
       statusBar()->showMessage(tr("Remote %1 added").arg(name));
     } else {
@@ -2520,7 +2221,8 @@ void MainWindow::showRemotesContextMenu(const QPoint &pos) {
           QInputDialog::getText(this, tr("Edit Remote URL"), tr("URL:"),
                                 QLineEdit::Normal, currentUrl, &ok);
       if (ok && !newUrl.isEmpty() && newUrl != currentUrl) {
-        if (execGit(m_currentPath, {"remote", "set-url", remoteName, newUrl})) {
+        if (m_gitExecutor->exec(m_currentPath,
+                                {"remote", "set-url", remoteName, newUrl})) {
           loadRemotes();
           statusBar()->showMessage(tr("Remote %1 URL updated").arg(remoteName));
         } else {
@@ -2534,7 +2236,8 @@ void MainWindow::showRemotesContextMenu(const QPoint &pos) {
           QInputDialog::getText(this, tr("Rename Remote"), tr("New name:"),
                                 QLineEdit::Normal, remoteName, &ok);
       if (ok && !newName.isEmpty() && newName != remoteName) {
-        if (execGit(m_currentPath, {"remote", "rename", remoteName, newName})) {
+        if (m_gitExecutor->exec(m_currentPath,
+                                {"remote", "rename", remoteName, newName})) {
           loadRemotes();
           statusBar()->showMessage(
               tr("Remote %1 renamed to %2").arg(remoteName, newName));
@@ -2544,7 +2247,7 @@ void MainWindow::showRemotesContextMenu(const QPoint &pos) {
         }
       }
     } else if (selected == pruneAction) {
-      if (execGit(m_currentPath, {"remote", "prune", remoteName})) {
+      if (m_gitExecutor->exec(m_currentPath, {"remote", "prune", remoteName})) {
         loadRepository(m_currentPath);
         statusBar()->showMessage(tr("Remote %1 pruned").arg(remoteName));
       } else {
@@ -2555,7 +2258,8 @@ void MainWindow::showRemotesContextMenu(const QPoint &pos) {
       if (QMessageBox::question(this, tr("Remove Remote"),
                                 tr("Remove remote %1?").arg(remoteName)) ==
           QMessageBox::Yes) {
-        if (execGit(m_currentPath, {"remote", "remove", remoteName})) {
+        if (m_gitExecutor->exec(m_currentPath,
+                                {"remote", "remove", remoteName})) {
           loadRemotes();
           statusBar()->showMessage(tr("Remote %1 removed").arg(remoteName));
         } else {
@@ -2575,7 +2279,7 @@ void MainWindow::showStagedContextMenu(const QPoint &pos) {
 
   const bool isFolder = item->childCount() > 0;
   QMenu menu(this);
-  const QString path = itemPath(m_stagedTree, item);
+  const QString path = m_stagedTree->itemPath(item);
   QAction *unstageAction =
       menu.addAction(isFolder ? tr("Unstage folder") : tr("Unstage file"));
   unstageAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_U));
@@ -2591,14 +2295,15 @@ void MainWindow::showStagedContextMenu(const QPoint &pos) {
     blameAction = menu.addAction(tr("Blame"));
   }
   QAction *externalDiffAction = nullptr;
-  if (!isFolder && !runGit(m_currentPath, {"config", "diff.tool"}).isEmpty()) {
+  if (!isFolder &&
+      !m_gitExecutor->run(m_currentPath, {"config", "diff.tool"}).isEmpty()) {
     externalDiffAction = menu.addAction(tr("Open in external diff tool"));
   }
   QAction *selected = menu.exec(m_stagedTree->mapToGlobal(pos));
   if (!selected)
     return;
   if (selected == unstageAction) {
-    if (execGit(m_currentPath, {"reset", "HEAD", "--", path})) {
+    if (m_gitExecutor->exec(m_currentPath, {"reset", "HEAD", "--", path})) {
       loadWorkingTree();
     }
   } else if (selected == unstageHunksAction) {
@@ -2641,7 +2346,7 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
 
   if (selected == checkoutAction) {
     QString output;
-    if (execGit(m_currentPath, {"checkout", sha}, &output)) {
+    if (m_gitExecutor->exec(m_currentPath, {"checkout", sha}, &output)) {
       loadRepository(m_currentPath);
       statusBar()->showMessage(tr("Checked out %1").arg(sha.left(7)));
     } else {
@@ -2664,7 +2369,7 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
       return;
     }
 
-    if (execGit(m_currentPath, {"branch", branchName, sha})) {
+    if (m_gitExecutor->exec(m_currentPath, {"branch", branchName, sha})) {
       loadRepository(m_currentPath);
       statusBar()->showMessage(tr("Branch %1 created").arg(branchName));
     } else {
@@ -2696,14 +2401,15 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
 
   if (selected == squashAction || selected == fixupAction) {
     const QString base = sha + QLatin1String("~2");
-    if (runGit(m_currentPath, {"rev-parse", base}).isEmpty()) {
+    if (m_gitExecutor->run(m_currentPath, {"rev-parse", base}).isEmpty()) {
       QMessageBox::warning(
           this, tr("Cannot rebase"),
           tr("Selected commit has no previous commit to combine with."));
       return;
     }
     const QString shortSha =
-        runGit(m_currentPath, {"rev-parse", "--short", sha}).value(0);
+        m_gitExecutor->run(m_currentPath, {"rev-parse", "--short", sha})
+            .value(0);
     const QString command = (selected == squashAction)
                                 ? QStringLiteral("squash")
                                 : QStringLiteral("fixup");
@@ -2747,8 +2453,9 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
           return;
       }
       QString output;
-      if (execGit(m_currentPath,
-                  {"reset", QStringLiteral("--%1").arg(mode), sha}, &output)) {
+      if (m_gitExecutor->exec(m_currentPath,
+                              {"reset", QStringLiteral("--%1").arg(mode), sha},
+                              &output)) {
         loadRepository(m_currentPath);
         statusBar()->showMessage(tr("Reset %1 to %2").arg(mode, sha.left(7)));
       } else {
@@ -2775,7 +2482,7 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
   }
 
   QString output;
-  if (execGit(m_currentPath, {"tag", tagName, sha}, &output)) {
+  if (m_gitExecutor->exec(m_currentPath, {"tag", tagName, sha}, &output)) {
     loadRepository(m_currentPath);
     statusBar()->showMessage(tr("Tag %1 created").arg(tagName));
   } else {
@@ -2818,12 +2525,13 @@ void MainWindow::diffWithCommit(const QString &fromSha) {
     return;
 
   const QString toSha = shas.at(index);
-  const QStringList diff = runGit(m_currentPath, {"diff", fromSha, toSha});
-  m_diffView->setHtml(
-      diff.isEmpty()
-          ? emptyStateHtml(tr("No diff"),
-                           tr("No changes to show for this selection."))
-          : formatDiff(diff));
+  const QStringList diff =
+      m_gitExecutor->run(m_currentPath, {"diff", fromSha, toSha});
+  if (diff.isEmpty())
+    m_diffView->showEmpty(tr("No diff"),
+                          tr("No changes to show for this selection."));
+  else
+    m_diffView->setHtml(m_diffPresenter->formatDiff(diff));
   statusBar()->showMessage(
       tr("Diff between %1 and %2").arg(fromSha.left(7), toSha.left(7)));
 }
@@ -2836,10 +2544,10 @@ void MainWindow::showCommitFilesContextMenu(const QPoint &pos) {
   if (item->childCount() > 0)
     return;
 
-  const QString path = itemPath(m_commitFilesTree, item);
+  const QString path = m_commitFilesTree->itemPath(item);
   QMenu menu(this);
   auto *externalDiffAction =
-      !runGit(m_currentPath, {"config", "diff.tool"}).isEmpty()
+      !m_gitExecutor->run(m_currentPath, {"config", "diff.tool"}).isEmpty()
           ? menu.addAction(tr("View diff in external diff tool"))
           : nullptr;
   if (externalDiffAction)
@@ -2887,7 +2595,7 @@ void MainWindow::showBlame(const QString &path, const QString &revision) {
 
   const QRegularExpression hunkRe(
       QStringLiteral("^(\\^?[0-9a-fA-F]{40}) (\\d+) (\\d+) (\\d+)$"));
-  for (const QString &line : runGit(m_currentPath, args)) {
+  for (const QString &line : m_gitExecutor->run(m_currentPath, args)) {
     const QRegularExpressionMatch m = hunkRe.match(line);
     if (m.hasMatch()) {
       currentSha = m.captured(1);
@@ -2957,9 +2665,9 @@ void MainWindow::onCommitSelected(QTableWidgetItem *item) {
 
   m_selectedCommitSha = shaItem->data(Qt::UserRole).toString();
 
-  for (const QString &line :
-       runGit(m_currentPath, {"diff-tree", "--no-commit-id", "--name-status",
-                              "--root", "-r", m_selectedCommitSha})) {
+  for (const QString &line : m_gitExecutor->run(
+           m_currentPath, {"diff-tree", "--no-commit-id", "--name-status",
+                           "--root", "-r", m_selectedCommitSha})) {
     const QStringList parts = line.split('\t');
     if (parts.size() < 2)
       continue;
@@ -2967,7 +2675,7 @@ void MainWindow::onCommitSelected(QTableWidgetItem *item) {
     const QString filePath = parts.last();
     if (status.isEmpty() || filePath.isEmpty())
       continue;
-    addFileToTree(m_commitFilesTree, filePath, status);
+    m_commitFilesTree->addFile(filePath, status);
   }
 
   if (m_commitFilesTree->topLevelItemCount() > 0) {
@@ -2986,19 +2694,19 @@ void MainWindow::onCommitFileClicked(QTreeWidgetItem *item, int column) {
   if (isFolder)
     return;
 
-  const QString path = itemPath(m_commitFilesTree, item);
-  const QStringList diff =
-      runGit(m_currentPath, {"show", "--pretty=format:", "--no-notes",
-                             m_selectedCommitSha, "--", path});
+  const QString path = m_commitFilesTree->itemPath(item);
+  const QStringList diff = m_gitExecutor->run(
+      m_currentPath, {"show", "--pretty=format:", "--no-notes",
+                      m_selectedCommitSha, "--", path});
   if (m_diffView) {
-    QString html;
-    if (diff.isEmpty())
-      html = emptyStateHtml(tr("No diff"),
+    if (diff.isEmpty()) {
+      m_diffView->showEmpty(tr("No diff"),
                             tr("No changes to show for this selection."));
-    else if (diffIsLfsPointer(diff))
-      html = lfsPointerHtml(diff);
-    else
-      html = formatDiff(diff);
+      return;
+    }
+    const QString html = m_diffPresenter->isLfsPointer(diff)
+                             ? m_diffPresenter->lfsPointerHtml(diff)
+                             : m_diffPresenter->formatDiff(diff);
     m_diffView->setHtml(html);
   }
 }
@@ -3009,14 +2717,14 @@ void MainWindow::onInitRepository() {
   if (path.isEmpty())
     return;
 
-  if (execGit(path, {"rev-parse", "--git-dir"})) {
+  if (m_gitExecutor->exec(path, {"rev-parse", "--git-dir"})) {
     QMessageBox::warning(this, tr("Already a Git repository"),
                          tr("The selected folder is already a Git "
                             "repository."));
     return;
   }
 
-  if (execGit(path, {"init"})) {
+  if (m_gitExecutor->exec(path, {"init"})) {
     loadRepository(path);
     statusBar()->showMessage(tr("Repository initialized"));
   } else {
@@ -3050,7 +2758,7 @@ void MainWindow::onCloneRepository() {
     return;
   }
 
-  if (execGit(parentDir, {"clone", url, repoName})) {
+  if (m_gitExecutor->exec(parentDir, {"clone", url, repoName})) {
     loadRepository(localPath);
     statusBar()->showMessage(tr("Cloned %1").arg(repoName));
   } else {
@@ -3064,15 +2772,9 @@ void MainWindow::loadRemotes() {
   for (QTreeWidgetItem *child : m_remotesItem->takeChildren())
     delete child;
 
-  for (const QString &line : runGit(m_currentPath, {"remote", "-v"})) {
-    const QStringList parts = line.split('\t');
-    if (parts.size() < 2)
-      continue;
-    const QString name = parts.at(0);
-    const QString rest = parts.at(1);
-    if (rest.endsWith(" (push)"))
-      continue;
-    const QString url = rest.section(' ', 0, -2);
+  for (const auto &remote : m_gitRepository->remotes()) {
+    const QString name = remote.first;
+    const QString url = remote.second;
     QTreeWidgetItem *child = new QTreeWidgetItem(m_remotesItem, {name});
     child->setToolTip(0, url);
     child->setData(0, Qt::UserRole, name);
@@ -3088,20 +2790,19 @@ void MainWindow::showStashDiff(const QString &ref) {
   QDialog dlg(this);
   dlg.setWindowTitle(tr("Stash diff"));
   auto *layout = new QVBoxLayout(&dlg);
-  auto *diffView = new QTextEdit(&dlg);
-  diffView->setReadOnly(true);
+  auto *diffView = new DiffViewWidget(&dlg);
   layout->addWidget(diffView);
 
   auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dlg);
   layout->addWidget(buttons);
   connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
 
-  const QStringList lines = runGit(m_currentPath, {"stash", "show", "-p", ref});
+  const QStringList lines =
+      m_gitExecutor->run(m_currentPath, {"stash", "show", "-p", ref});
   if (lines.isEmpty())
-    diffView->setHtml(
-        emptyStateHtml(tr("No diff"), tr("No changes in this stash.")));
+    diffView->showEmpty(tr("No diff"), tr("No changes in this stash."));
   else
-    diffView->setHtml(formatDiff(lines));
+    diffView->setHtml(m_diffPresenter->formatDiff(lines));
 
   dlg.resize(900, 600);
   dlg.exec();
@@ -3113,13 +2814,10 @@ void MainWindow::loadWorktrees() {
   while (m_worktreesItem->childCount() > 0)
     delete m_worktreesItem->takeChild(0);
 
-  for (const QString &line : runGit(m_currentPath, {"worktree", "list"})) {
-    const QString path = line.section(' ', 0, 0).trimmed();
-    if (path.isEmpty())
-      continue;
+  for (const QString &path : m_gitRepository->worktrees()) {
     auto *item = new QTreeWidgetItem(m_worktreesItem, {path});
     item->setData(0, Qt::UserRole, path);
-    item->setToolTip(0, line);
+    item->setToolTip(0, path);
   }
 }
 
@@ -3174,7 +2872,8 @@ void MainWindow::showWorktreeContextMenu(const QPoint &pos) {
       return;
 
     const QString existingSha =
-        runGit(m_currentPath, {"rev-parse", "--verify", branch}).value(0);
+        m_gitExecutor->run(m_currentPath, {"rev-parse", "--verify", branch})
+            .value(0);
     QStringList args = {"worktree", "add"};
     if (existingSha.isEmpty())
       args << "-b" << branch;
@@ -3182,7 +2881,7 @@ void MainWindow::showWorktreeContextMenu(const QPoint &pos) {
     if (!existingSha.isEmpty())
       args << branch;
 
-    if (execGit(m_currentPath, args)) {
+    if (m_gitExecutor->exec(m_currentPath, args)) {
       loadWorktrees();
       statusBar()->showMessage(tr("Worktree added"));
     } else {
@@ -3212,7 +2911,7 @@ void MainWindow::showWorktreeContextMenu(const QPoint &pos) {
                            tr("Cannot remove the currently open worktree."));
       return;
     }
-    if (execGit(m_currentPath, {"worktree", "remove", path})) {
+    if (m_gitExecutor->exec(m_currentPath, {"worktree", "remove", path})) {
       loadWorktrees();
       statusBar()->showMessage(tr("Worktree removed"));
     } else {
@@ -3228,12 +2927,9 @@ void MainWindow::loadStashes() {
   while (m_stashesItem->childCount() > 0)
     delete m_stashesItem->takeChild(0);
 
-  for (const QString &line : runGit(m_currentPath, {"stash", "list"})) {
-    const int colon = line.indexOf(':');
-    if (colon < 0)
-      continue;
-    const QString ref = line.left(colon).trimmed();
-    const QString msg = line.mid(colon + 1).trimmed();
+  for (const auto &stash : m_gitRepository->stashes()) {
+    const QString ref = stash.first;
+    const QString msg = stash.second;
     if (ref.isEmpty())
       continue;
     auto *stashItem = new QTreeWidgetItem(m_stashesItem, QStringList{msg});
@@ -3255,12 +2951,12 @@ void MainWindow::onStashClicked(QTreeWidgetItem *item, int column) {
   if (m_commitFilesTree) {
     m_commitFilesTree->clear();
     for (const QString &line :
-         runGit(m_currentPath,
-                {"diff", "--name-status", ref + QLatin1Char('^'), ref})) {
+         m_gitExecutor->run(m_currentPath, {"diff", "--name-status",
+                                            ref + QLatin1Char('^'), ref})) {
       const QStringList parts = line.split('\t');
       if (parts.size() < 2)
         continue;
-      addFileToTree(m_commitFilesTree, parts.last(), parts.first().left(1));
+      m_commitFilesTree->addFile(parts.last(), parts.first().left(1));
     }
     if (m_commitFilesTree->topLevelItemCount() > 0) {
       m_commitFilesTree->collapseAll();
@@ -3269,14 +2965,14 @@ void MainWindow::onStashClicked(QTreeWidgetItem *item, int column) {
     }
   }
 
-  const QStringList diff =
-      runGit(m_currentPath, {"show", "--pretty=format:", "--no-notes", ref});
+  const QStringList diff = m_gitExecutor->run(
+      m_currentPath, {"show", "--pretty=format:", "--no-notes", ref});
   if (m_diffView) {
-    m_diffView->setHtml(
-        diff.isEmpty()
-            ? emptyStateHtml(tr("No diff"),
-                             tr("No changes to show for this selection."))
-            : formatDiff(diff));
+    if (diff.isEmpty())
+      m_diffView->showEmpty(tr("No diff"),
+                            tr("No changes to show for this selection."));
+    else
+      m_diffView->setHtml(m_diffPresenter->formatDiff(diff));
   }
 }
 
@@ -3286,12 +2982,12 @@ void MainWindow::onFileClicked(QTreeWidgetItem *item, int column) {
     return;
   }
 
-  QTreeWidget *tree = qobject_cast<QTreeWidget *>(sender());
+  auto *tree = qobject_cast<FileTreeWidget *>(sender());
   if (!tree) {
     return;
   }
 
-  const QString path = itemPath(tree, item);
+  const QString path = tree->itemPath(item);
   const bool staged = (tree == m_stagedTree);
   const bool isFolder = item->childCount() > 0;
   const bool isNew =
@@ -3300,49 +2996,49 @@ void MainWindow::onFileClicked(QTreeWidgetItem *item, int column) {
   if (isNew) {
     if (staged) {
       const QStringList diff =
-          runGit(m_currentPath, {"diff", "--cached", "--", path});
+          m_gitExecutor->run(m_currentPath, {"diff", "--cached", "--", path});
       if (m_diffView) {
-        QString html;
-        if (diff.isEmpty())
-          html = emptyStateHtml(tr("No diff"),
+        if (diff.isEmpty()) {
+          m_diffView->showEmpty(tr("No diff"),
                                 tr("No changes to show for this selection."));
-        else if (diffIsLfsPointer(diff))
-          html = lfsPointerHtml(diff);
-        else
-          html = formatDiff(diff);
+          return;
+        }
+        const QString html = m_diffPresenter->isLfsPointer(diff)
+                                 ? m_diffPresenter->lfsPointerHtml(diff)
+                                 : m_diffPresenter->formatDiff(diff);
         m_diffView->setHtml(html);
       }
     } else {
-      const QStringList diff = runGit(
+      const QStringList diff = m_gitExecutor->run(
           m_currentPath,
           {"diff", "--no-index", "--", QStringLiteral("/dev/null"), path}, 1);
       if (m_diffView) {
-        QString html;
-        if (diff.isEmpty())
-          html = emptyStateHtml(tr("No diff"),
+        if (diff.isEmpty()) {
+          m_diffView->showEmpty(tr("No diff"),
                                 tr("No changes to show for this selection."));
-        else if (diffIsLfsPointer(diff))
-          html = lfsPointerHtml(diff);
-        else
-          html = formatDiff(diff);
+          return;
+        }
+        const QString html = m_diffPresenter->isLfsPointer(diff)
+                                 ? m_diffPresenter->lfsPointerHtml(diff)
+                                 : m_diffPresenter->formatDiff(diff);
         m_diffView->setHtml(html);
       }
     }
     return;
   }
 
-  const QStringList diff =
-      runGit(m_currentPath, staged ? QStringList{"diff", "--cached", "--", path}
-                                   : QStringList{"diff", "--", path});
+  const QStringList diff = m_gitExecutor->run(
+      m_currentPath, staged ? QStringList{"diff", "--cached", "--", path}
+                            : QStringList{"diff", "--", path});
   if (m_diffView) {
-    QString html;
-    if (diff.isEmpty())
-      html = emptyStateHtml(tr("No diff"),
+    if (diff.isEmpty()) {
+      m_diffView->showEmpty(tr("No diff"),
                             tr("No changes to show for this selection."));
-    else if (diffIsLfsPointer(diff))
-      html = lfsPointerHtml(diff);
-    else
-      html = formatDiff(diff);
+      return;
+    }
+    const QString html = m_diffPresenter->isLfsPointer(diff)
+                             ? m_diffPresenter->lfsPointerHtml(diff)
+                             : m_diffPresenter->formatDiff(diff);
     m_diffView->setHtml(html);
   }
 }
@@ -3434,7 +3130,8 @@ void MainWindow::showSubmodulesContextMenu(const QPoint &pos) {
   if (selected == openAction) {
     loadRepository(m_currentPath + QLatin1Char('/') + subPath);
   } else if (selected == initAction || selected == updateAction) {
-    if (execGit(m_currentPath, {"submodule", "update", "--init", subPath})) {
+    if (m_gitExecutor->exec(m_currentPath,
+                            {"submodule", "update", "--init", subPath})) {
       loadRepository(m_currentPath);
       statusBar()->showMessage(tr("Submodule %1 updated").arg(subPath));
     } else {
@@ -3445,8 +3142,9 @@ void MainWindow::showSubmodulesContextMenu(const QPoint &pos) {
                               tr("Remove submodule %1?").arg(subPath),
                               QMessageBox::Yes | QMessageBox::No) ==
         QMessageBox::Yes) {
-      bool ok = execGit(m_currentPath, {"submodule", "deinit", "-f", subPath});
-      ok &= execGit(m_currentPath, {"rm", "-f", subPath});
+      bool ok = m_gitExecutor->exec(m_currentPath,
+                                    {"submodule", "deinit", "-f", subPath});
+      ok &= m_gitExecutor->exec(m_currentPath, {"rm", "-f", subPath});
       QDir(m_currentPath + QLatin1String("/.git/modules/") + subPath)
           .removeRecursively();
       if (ok) {
@@ -3466,8 +3164,8 @@ void MainWindow::initSubmodules() {
     return;
   }
 
-  if (execGit(m_currentPath,
-              {"submodule", "update", "--init", "--recursive"})) {
+  if (m_gitExecutor->exec(m_currentPath,
+                          {"submodule", "update", "--init", "--recursive"})) {
     loadWorkingTree();
     statusBar()->showMessage(tr("Submodules initialized"));
   } else {
@@ -3482,7 +3180,8 @@ void MainWindow::updateSubmodules() {
     return;
   }
 
-  if (execGit(m_currentPath, {"submodule", "update", "--recursive"})) {
+  if (m_gitExecutor->exec(m_currentPath,
+                          {"submodule", "update", "--recursive"})) {
     loadWorkingTree();
     statusBar()->showMessage(tr("Submodules updated"));
   } else {
@@ -3511,7 +3210,7 @@ void MainWindow::addSubmodule() {
   if (!okPath || path.isEmpty())
     return;
 
-  if (execGit(m_currentPath, {"submodule", "add", url, path})) {
+  if (m_gitExecutor->exec(m_currentPath, {"submodule", "add", url, path})) {
     loadWorkingTree();
     statusBar()->showMessage(tr("Submodule added"));
   } else {
@@ -3526,9 +3225,9 @@ void MainWindow::openSubmodule() {
     return;
   }
 
-  const QStringList configLines =
-      runGit(m_currentPath, {"config", "--file", QStringLiteral(".gitmodules"),
-                             "--get-regexp", "^submodule\\..*\\.path$"});
+  const QStringList configLines = m_gitExecutor->run(
+      m_currentPath, {"config", "--file", QStringLiteral(".gitmodules"),
+                      "--get-regexp", "^submodule\\..*\\.path$"});
   if (configLines.isEmpty()) {
     QMessageBox::warning(this, tr("No submodules"),
                          tr("This repository has no submodules."));
@@ -3576,19 +3275,24 @@ void MainWindow::showRepositorySettings() {
   auto *lfsLocksverifyBox =
       new QCheckBox(tr("Verify LFS locks before push"), &dlg);
 
-  nameEdit->setText(runGit(m_currentPath, {"config", "user.name"}).value(0));
-  emailEdit->setText(runGit(m_currentPath, {"config", "user.email"}).value(0));
+  nameEdit->setText(
+      m_gitExecutor->run(m_currentPath, {"config", "user.name"}).value(0));
+  emailEdit->setText(
+      m_gitExecutor->run(m_currentPath, {"config", "user.email"}).value(0));
   branchEdit->setText(
-      runGit(m_currentPath, {"config", "init.defaultBranch"}).value(0));
+      m_gitExecutor->run(m_currentPath, {"config", "init.defaultBranch"})
+          .value(0));
   autocrlfCombo->setCurrentText(
-      runGit(m_currentPath, {"config", "core.autocrlf"}).value(0));
+      m_gitExecutor->run(m_currentPath, {"config", "core.autocrlf"}).value(0));
   diffToolEdit->setText(
-      runGit(m_currentPath, {"config", "diff.tool"}).value(0));
+      m_gitExecutor->run(m_currentPath, {"config", "diff.tool"}).value(0));
   mergeToolEdit->setText(
-      runGit(m_currentPath, {"config", "merge.tool"}).value(0));
-  lfsUrlEdit->setText(runGit(m_currentPath, {"config", "lfs.url"}).value(0));
+      m_gitExecutor->run(m_currentPath, {"config", "merge.tool"}).value(0));
+  lfsUrlEdit->setText(
+      m_gitExecutor->run(m_currentPath, {"config", "lfs.url"}).value(0));
   const QString locksverify =
-      runGit(m_currentPath, {"config", "--bool", "lfs.locksverify"}).value(0);
+      m_gitExecutor->run(m_currentPath, {"config", "--bool", "lfs.locksverify"})
+          .value(0);
   lfsLocksverifyBox->setChecked(locksverify == QLatin1String("true"));
 
   form->addRow(tr("User name:"), nameEdit);
@@ -3612,9 +3316,9 @@ void MainWindow::showRepositorySettings() {
 
   auto setConfig = [this](const QString &key, const QString &value) {
     if (value.isEmpty()) {
-      execGit(m_currentPath, {"config", "--local", "--unset", key});
+      m_gitExecutor->exec(m_currentPath, {"config", "--local", "--unset", key});
     } else {
-      execGit(m_currentPath, {"config", "--local", key, value});
+      m_gitExecutor->exec(m_currentPath, {"config", "--local", key, value});
     }
   };
 
@@ -3662,9 +3366,9 @@ void MainWindow::showHunkStaging(const QString &path, bool unstage) {
 
   if (hunkStarts.isEmpty()) {
     if (unstage)
-      execGit(m_currentPath, {"reset", "HEAD", "--", path});
+      m_gitExecutor->exec(m_currentPath, {"reset", "HEAD", "--", path});
     else
-      execGit(m_currentPath, {"add", "--", path});
+      m_gitExecutor->exec(m_currentPath, {"add", "--", path});
     loadWorkingTree();
     return;
   }
@@ -3717,13 +3421,13 @@ void MainWindow::showHunkStaging(const QString &path, bool unstage) {
     auto *wi = list->currentItem();
     if (!wi)
       return;
-    preview->setHtml(
-        formatDiff(wi->data(Qt::UserRole).toString().split(QLatin1Char('\n'))));
+    preview->setHtml(m_diffPresenter->formatDiff(
+        wi->data(Qt::UserRole).toString().split(QLatin1Char('\n'))));
   };
   connect(list, &QListWidget::currentItemChanged, this, updatePreview);
   list->setCurrentRow(0);
   if (!hunks.isEmpty()) {
-    preview->setHtml(formatDiff(
+    preview->setHtml(m_diffPresenter->formatDiff(
         lines.mid(hunks[0].start, hunks[0].end - hunks[0].start + 1)));
   }
 
@@ -3770,7 +3474,7 @@ void MainWindow::showHunkStaging(const QString &path, bool unstage) {
   const QStringList applyArgs =
       unstage ? QStringList{"apply", "--cached", "-R", tempFile.fileName()}
               : QStringList{"apply", "--cached", tempFile.fileName()};
-  if (execGit(m_currentPath, applyArgs)) {
+  if (m_gitExecutor->exec(m_currentPath, applyArgs)) {
     loadWorkingTree();
     statusBar()->showMessage(unstage ? tr("Hunks unstaged")
                                      : tr("Hunks staged"));
@@ -3784,9 +3488,9 @@ void MainWindow::showInteractiveRebase(const QString &baseSha) {
   if (m_currentPath.isEmpty() || baseSha.isEmpty())
     return;
 
-  const QStringList logLines =
-      runGit(m_currentPath, {"log", baseSha + QLatin1String("..HEAD"),
-                             "--reverse", "--pretty=format:%H %s"});
+  const QStringList logLines = m_gitExecutor->run(
+      m_currentPath, {"log", baseSha + QLatin1String("..HEAD"), "--reverse",
+                      "--pretty=format:%H %s"});
   if (logLines.isEmpty()) {
     QMessageBox::information(
         this, tr("Nothing to rebase"),
@@ -3975,12 +3679,12 @@ void MainWindow::showConflictResolver(const QString &operation) {
 
   auto refresh = [&]() {
     list->clear();
-    for (const QString &file :
-         runGit(m_currentPath, {"diff", "--name-only", "--diff-filter=U"}))
+    for (const QString &file : m_gitExecutor->run(
+             m_currentPath, {"diff", "--name-only", "--diff-filter=U"}))
       list->addItem(file);
     const bool hasSelection = list->currentItem() != nullptr;
     const bool hasMergeTool =
-        !runGit(m_currentPath, {"config", "merge.tool"}).isEmpty();
+        !m_gitExecutor->run(m_currentPath, {"config", "merge.tool"}).isEmpty();
     oursBtn->setEnabled(hasSelection);
     theirsBtn->setEnabled(hasSelection);
     resolvedBtn->setEnabled(hasSelection);
@@ -3997,8 +3701,8 @@ void MainWindow::showConflictResolver(const QString &operation) {
     if (!item)
       return;
     const QString file = item->text();
-    execGit(m_currentPath, {"checkout", "--ours", "--", file});
-    execGit(m_currentPath, {"add", "--", file});
+    m_gitExecutor->exec(m_currentPath, {"checkout", "--ours", "--", file});
+    m_gitExecutor->exec(m_currentPath, {"add", "--", file});
     refresh();
   });
 
@@ -4007,8 +3711,8 @@ void MainWindow::showConflictResolver(const QString &operation) {
     if (!item)
       return;
     const QString file = item->text();
-    execGit(m_currentPath, {"checkout", "--theirs", "--", file});
-    execGit(m_currentPath, {"add", "--", file});
+    m_gitExecutor->exec(m_currentPath, {"checkout", "--theirs", "--", file});
+    m_gitExecutor->exec(m_currentPath, {"add", "--", file});
     refresh();
   });
 
@@ -4017,7 +3721,7 @@ void MainWindow::showConflictResolver(const QString &operation) {
     if (!item)
       return;
     const QString file = item->text();
-    execGit(m_currentPath, {"add", "--", file});
+    m_gitExecutor->exec(m_currentPath, {"add", "--", file});
     refresh();
   });
 
@@ -4052,7 +3756,8 @@ void MainWindow::showConflictResolver(const QString &operation) {
   });
 
   connect(abortBtn, &QPushButton::clicked, this, [&]() {
-    if (execGit(m_currentPath, {operation, QStringLiteral("--abort")})) {
+    if (m_gitExecutor->exec(m_currentPath,
+                            {operation, QStringLiteral("--abort")})) {
       loadRepository(m_currentPath);
       dlg.accept();
       statusBar()->showMessage(tr("%1 aborted").arg(operation));
@@ -4068,14 +3773,14 @@ void MainWindow::cherryPickCommit(const QString &sha) {
     return;
 
   QString output;
-  if (execGit(m_currentPath, {"cherry-pick", sha}, &output)) {
+  if (m_gitExecutor->exec(m_currentPath, {"cherry-pick", sha}, &output)) {
     loadRepository(m_currentPath);
     statusBar()->showMessage(tr("Cherry-picked %1").arg(sha.left(7)));
     return;
   }
 
-  const QStringList conflicted =
-      runGit(m_currentPath, {"diff", "--name-only", "--diff-filter=U"});
+  const QStringList conflicted = m_gitExecutor->run(
+      m_currentPath, {"diff", "--name-only", "--diff-filter=U"});
   if (conflicted.isEmpty()) {
     QMessageBox::warning(this, tr("Cherry-pick failed"), output);
     return;
@@ -4089,14 +3794,14 @@ void MainWindow::revertCommit(const QString &sha) {
     return;
 
   QString output;
-  if (execGit(m_currentPath, {"revert", sha}, &output)) {
+  if (m_gitExecutor->exec(m_currentPath, {"revert", sha}, &output)) {
     loadRepository(m_currentPath);
     statusBar()->showMessage(tr("Reverted %1").arg(sha.left(7)));
     return;
   }
 
-  const QStringList conflicted =
-      runGit(m_currentPath, {"diff", "--name-only", "--diff-filter=U"});
+  const QStringList conflicted = m_gitExecutor->run(
+      m_currentPath, {"diff", "--name-only", "--diff-filter=U"});
   if (conflicted.isEmpty()) {
     QMessageBox::warning(this, tr("Revert failed"), output);
     return;
@@ -4135,7 +3840,7 @@ void MainWindow::startBisect() {
     return;
   }
 
-  if (execGit(m_currentPath, {"bisect", "start", bad, good})) {
+  if (m_gitExecutor->exec(m_currentPath, {"bisect", "start", bad, good})) {
     loadRepository(m_currentPath);
     statusBar()->showMessage(tr("Bisect started"));
   }
@@ -4144,7 +3849,7 @@ void MainWindow::startBisect() {
 void MainWindow::bisectGood() {
   if (m_currentPath.isEmpty())
     return;
-  if (execGit(m_currentPath, {"bisect", "good"})) {
+  if (m_gitExecutor->exec(m_currentPath, {"bisect", "good"})) {
     loadRepository(m_currentPath);
     statusBar()->showMessage(tr("Marked as good"));
   }
@@ -4153,7 +3858,7 @@ void MainWindow::bisectGood() {
 void MainWindow::bisectBad() {
   if (m_currentPath.isEmpty())
     return;
-  if (execGit(m_currentPath, {"bisect", "bad"})) {
+  if (m_gitExecutor->exec(m_currentPath, {"bisect", "bad"})) {
     loadRepository(m_currentPath);
     statusBar()->showMessage(tr("Marked as bad"));
   }
@@ -4162,7 +3867,7 @@ void MainWindow::bisectBad() {
 void MainWindow::bisectSkip() {
   if (m_currentPath.isEmpty())
     return;
-  if (execGit(m_currentPath, {"bisect", "skip"})) {
+  if (m_gitExecutor->exec(m_currentPath, {"bisect", "skip"})) {
     loadRepository(m_currentPath);
     statusBar()->showMessage(tr("Skipped"));
   }
@@ -4171,7 +3876,7 @@ void MainWindow::bisectSkip() {
 void MainWindow::bisectReset() {
   if (m_currentPath.isEmpty())
     return;
-  if (execGit(m_currentPath, {"bisect", "reset"})) {
+  if (m_gitExecutor->exec(m_currentPath, {"bisect", "reset"})) {
     loadRepository(m_currentPath);
     statusBar()->showMessage(tr("Bisect reset"));
   }
@@ -4188,7 +3893,7 @@ void MainWindow::lfsTrack() {
   if (!ok || pattern.isEmpty())
     return;
 
-  if (execGit(m_currentPath, {"lfs", "track", pattern})) {
+  if (m_gitExecutor->exec(m_currentPath, {"lfs", "track", pattern})) {
     loadWorkingTree();
     statusBar()->showMessage(tr("LFS tracking %1").arg(pattern));
   } else {
@@ -4207,7 +3912,7 @@ void MainWindow::lfsUntrack() {
   if (!ok || pattern.isEmpty())
     return;
 
-  if (execGit(m_currentPath, {"lfs", "untrack", pattern})) {
+  if (m_gitExecutor->exec(m_currentPath, {"lfs", "untrack", pattern})) {
     loadWorkingTree();
     statusBar()->showMessage(tr("LFS untracking %1").arg(pattern));
   } else {
@@ -4218,7 +3923,7 @@ void MainWindow::lfsUntrack() {
 void MainWindow::lfsPull() {
   if (m_currentPath.isEmpty())
     return;
-  if (execGit(m_currentPath, {"lfs", "pull"})) {
+  if (m_gitExecutor->exec(m_currentPath, {"lfs", "pull"})) {
     loadWorkingTree();
     statusBar()->showMessage(tr("LFS objects pulled"));
   } else {
@@ -4231,10 +3936,13 @@ void MainWindow::lfsPush() {
     return;
 
   const QString currentBranch =
-      runGit(m_currentPath, {"rev-parse", "--abbrev-ref", "HEAD"}).value(0);
+      m_gitExecutor->run(m_currentPath, {"rev-parse", "--abbrev-ref", "HEAD"})
+          .value(0);
   const QString remote =
-      runGit(m_currentPath,
-             {"config", QStringLiteral("branch.%1.remote").arg(currentBranch)})
+      m_gitExecutor
+          ->run(
+              m_currentPath,
+              {"config", QStringLiteral("branch.%1.remote").arg(currentBranch)})
           .value(0);
   if (currentBranch.isEmpty() || remote.isEmpty()) {
     QMessageBox::warning(this, tr("LFS push"),
@@ -4242,7 +3950,8 @@ void MainWindow::lfsPush() {
     return;
   }
 
-  if (execGit(m_currentPath, {"lfs", "push", remote, currentBranch})) {
+  if (m_gitExecutor->exec(m_currentPath,
+                          {"lfs", "push", remote, currentBranch})) {
     statusBar()->showMessage(tr("LFS objects pushed"));
   } else {
     statusBar()->showMessage(tr("Failed to push LFS objects"));
@@ -4256,7 +3965,8 @@ void MainWindow::showReflog() {
     return;
   }
 
-  const QStringList raw = runGit(m_currentPath, {QStringLiteral("reflog")});
+  const QStringList raw =
+      m_gitExecutor->run(m_currentPath, {QStringLiteral("reflog")});
   if (raw.isEmpty()) {
     QMessageBox::information(this, tr("No reflog"), tr("Reflog is empty."));
     return;
@@ -4315,47 +4025,47 @@ void MainWindow::showReflog() {
   layout->addWidget(table);
 
   table->setContextMenuPolicy(Qt::CustomContextMenu);
-  connect(table, &QTableWidget::customContextMenuRequested, this,
-          [this, table, &dlg](const QPoint &pos) {
-            auto *item = table->itemAt(pos);
-            if (!item)
-              return;
-            const int row = item->row();
-            const QString sha =
-                table->item(row, 0)->data(Qt::UserRole).toString();
-            QMenu menu(&dlg);
-            auto *checkoutAction =
-                menu.addAction(tr("Checkout %1").arg(sha.left(7)));
-            auto *resetAction =
-                menu.addAction(tr("Reset to %1").arg(sha.left(7)));
-            auto *branchAction =
-                menu.addAction(tr("Create branch from %1").arg(sha.left(7)));
-            QAction *selected = menu.exec(table->mapToGlobal(pos));
-            if (!selected)
-              return;
-            if (selected == checkoutAction) {
-              if (execGit(m_currentPath, {"checkout", sha}))
-                loadRepository(m_currentPath);
-            } else if (selected == resetAction) {
-              if (QMessageBox::warning(
-                      this, tr("Reset"),
-                      tr("Reset the current branch to %1?").arg(sha.left(7)),
-                      QMessageBox::Yes | QMessageBox::No,
-                      QMessageBox::No) == QMessageBox::Yes) {
-                if (execGit(m_currentPath, {"reset", "--hard", sha}))
-                  loadRepository(m_currentPath);
-              }
-            } else if (selected == branchAction) {
-              bool ok;
-              const QString name = QInputDialog::getText(
-                  this, tr("Create Branch"), tr("Branch name:"),
-                  QLineEdit::Normal, QString(), &ok);
-              if (ok && !name.isEmpty()) {
-                if (execGit(m_currentPath, {"checkout", "-b", name, sha}))
-                  loadRepository(m_currentPath);
-              }
-            }
-          });
+  connect(
+      table, &QTableWidget::customContextMenuRequested, this,
+      [this, table, &dlg](const QPoint &pos) {
+        auto *item = table->itemAt(pos);
+        if (!item)
+          return;
+        const int row = item->row();
+        const QString sha = table->item(row, 0)->data(Qt::UserRole).toString();
+        QMenu menu(&dlg);
+        auto *checkoutAction =
+            menu.addAction(tr("Checkout %1").arg(sha.left(7)));
+        auto *resetAction = menu.addAction(tr("Reset to %1").arg(sha.left(7)));
+        auto *branchAction =
+            menu.addAction(tr("Create branch from %1").arg(sha.left(7)));
+        QAction *selected = menu.exec(table->mapToGlobal(pos));
+        if (!selected)
+          return;
+        if (selected == checkoutAction) {
+          if (m_gitExecutor->exec(m_currentPath, {"checkout", sha}))
+            loadRepository(m_currentPath);
+        } else if (selected == resetAction) {
+          if (QMessageBox::warning(
+                  this, tr("Reset"),
+                  tr("Reset the current branch to %1?").arg(sha.left(7)),
+                  QMessageBox::Yes | QMessageBox::No,
+                  QMessageBox::No) == QMessageBox::Yes) {
+            if (m_gitExecutor->exec(m_currentPath, {"reset", "--hard", sha}))
+              loadRepository(m_currentPath);
+          }
+        } else if (selected == branchAction) {
+          bool ok;
+          const QString name = QInputDialog::getText(
+              this, tr("Create Branch"), tr("Branch name:"), QLineEdit::Normal,
+              QString(), &ok);
+          if (ok && !name.isEmpty()) {
+            if (m_gitExecutor->exec(m_currentPath,
+                                    {"checkout", "-b", name, sha}))
+              loadRepository(m_currentPath);
+          }
+        }
+      });
 
   auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dlg);
   layout->addWidget(buttons);

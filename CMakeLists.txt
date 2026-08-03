@@ -16,10 +16,28 @@ find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Network Concurren
 set(SOURCES
     src/main.cpp
     src/MainWindow.cpp
+    src/GitExecutor.cpp
+    src/GitRepository.cpp
+    src/DiffPresenter.cpp
+    src/CommitModel.cpp
+    src/WorkingTreeModel.cpp
+    src/widgets/DiffViewWidget.cpp
+    src/widgets/RepoPanelWidget.cpp
+    src/widgets/CommitTableWidget.cpp
+    src/widgets/FileTreeWidget.cpp
 )
 
 set(HEADERS
     src/MainWindow.h
+    src/GitExecutor.h
+    src/GitRepository.h
+    src/DiffPresenter.h
+    src/CommitModel.h
+    src/WorkingTreeModel.h
+    src/widgets/DiffViewWidget.h
+    src/widgets/RepoPanelWidget.h
+    src/widgets/CommitTableWidget.h
+    src/widgets/FileTreeWidget.h
 )
 
 set(FORMS

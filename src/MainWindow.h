@@ -1,6 +1,14 @@
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 // test
+#include "CommitModel.h"
+#include "DiffPresenter.h"
+#include "GitExecutor.h"
+#include "GitRepository.h"
+#include "WorkingTreeModel.h"
+#include "widgets/DiffViewWidget.h"
+#include "widgets/FileTreeWidget.h"
+
 #include <QMainWindow>
 #include <QSet>
 #include <QStringList>
@@ -89,23 +97,10 @@ private:
   void diffWithCommit(const QString &fromSha);
   void onGrepResultActivated(QTreeWidgetItem *item, int column);
   void showBlame(const QString &path, const QString &revision = QString());
-  void addFileToTree(QTreeWidget *tree, const QString &filePath,
-                     const QString &status = QString());
-  QIcon statusIcon(const QString &status) const;
-  QString itemPath(QTreeWidget *tree, QTreeWidgetItem *item) const;
-  QString formatDiff(const QStringList &lines) const;
-  bool diffIsLfsPointer(const QStringList &lines) const;
-  QString lfsPointerHtml(const QStringList &lines) const;
-  QString emptyStateHtml(const QString &title, const QString &message) const;
-  QString errorStateHtml(const QString &message) const;
   void showEmptyDiff();
   void showErrorDiff(const QString &message);
   void showEmptyCommitFiles();
   void showErrorCommitFiles(const QString &message);
-  QStringList runGit(const QString &path, const QStringList &args,
-                     int acceptedExitCode = 0) const;
-  bool execGit(const QString &path, const QStringList &args,
-               QString *output = nullptr) const;
   void launchGitTool(const QStringList &args, bool reload = false);
   void loadStashes();
   void showStashDiff(const QString &ref);
@@ -122,6 +117,11 @@ private:
   void onBranchClicked(QTreeWidgetItem *item, int column);
 
   Ui::MainWindow *ui;
+  GitExecutor *m_gitExecutor = nullptr;
+  GitRepository *m_gitRepository = nullptr;
+  DiffPresenter *m_diffPresenter = nullptr;
+  CommitModel *m_commitModel = nullptr;
+  WorkingTreeModel *m_workingTreeModel = nullptr;
   QTreeWidget *m_repoPanel = nullptr;
   QTreeWidgetItem *m_localBranchesItem = nullptr;
   QTreeWidgetItem *m_remoteBranchesItem = nullptr;
@@ -141,10 +141,10 @@ private:
   QTableWidget *m_commitTable = nullptr;
   QFileSystemWatcher *m_watcher = nullptr;
   QTimer *m_fsDebounceTimer = nullptr;
-  QTreeWidget *m_unstagedTree = nullptr;
-  QTreeWidget *m_stagedTree = nullptr;
-  QTreeWidget *m_commitFilesTree = nullptr;
-  QTextEdit *m_diffView = nullptr;
+  FileTreeWidget *m_unstagedTree = nullptr;
+  FileTreeWidget *m_stagedTree = nullptr;
+  FileTreeWidget *m_commitFilesTree = nullptr;
+  DiffViewWidget *m_diffView = nullptr;
   QLineEdit *m_commitSubject = nullptr;
   QTextEdit *m_commitBody = nullptr;
   QPushButton *m_commitButton = nullptr;
