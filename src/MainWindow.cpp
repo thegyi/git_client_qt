@@ -1080,15 +1080,16 @@ void MainWindow::loadRepository(const QString &path) {
       QApplication::style()->pixelMetric(QStyle::PM_ScrollBarExtent) +
       2 * m_commitTable->frameWidth();
   m_commitTable->setFixedWidth(tableWidth);
-  const int leftWidth =
-      qBound(80, m_repoPanel ? m_repoPanel->sizeHint().width() + 20 : 180, 200);
-  const int rightWidth = 200;
-  if (m_repoDock && m_workTreeDock) {
-    resizeDocks({m_repoDock, m_workTreeDock}, {leftWidth, rightWidth},
-                Qt::Horizontal);
-  }
-  if (isInitialLoad)
+  if (isInitialLoad) {
+    const int leftWidth = qBound(
+        80, m_repoPanel ? m_repoPanel->sizeHint().width() + 20 : 180, 200);
+    const int rightWidth = 200;
+    if (m_repoDock && m_workTreeDock) {
+      resizeDocks({m_repoDock, m_workTreeDock}, {leftWidth, rightWidth},
+                  Qt::Horizontal);
+    }
     resize(leftWidth + tableWidth + rightWidth, height());
+  }
   qDebug() << "loadRepository: loaded" << m_commitTable->rowCount()
            << "commits";
   updateFilter();
