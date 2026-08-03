@@ -124,11 +124,12 @@ private:
   QPushButton *m_commitButton = nullptr;
   QCheckBox *m_amendCheckBox = nullptr;
   QLabel *m_branchLabel = nullptr;
-  QPushButton *m_pushButton = nullptr;
+  QToolButton *m_pushButton = nullptr;
   QPushButton *m_undoButton = nullptr;
   QToolButton *m_pullButton = nullptr;
   QMenu *m_recentMenu = nullptr;
   QStringList m_pullArgs;
+  QStringList m_pushArgs;
   QLineEdit *m_filterEdit = nullptr;
   QDockWidget *m_repoDock = nullptr;
   QDockWidget *m_workTreeDock = nullptr;

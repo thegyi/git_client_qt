@@ -151,7 +151,10 @@ MainWindow::MainWindow(QWidget *parent)
 
   auto *remoteBar = addToolBar(tr("Remote"));
   remoteBar->setMovable(false);
-  m_pushButton = new QPushButton(tr("Push"), this);
+  m_pushButton = new QToolButton(this);
+  m_pushButton->setText(tr("Push"));
+  m_pushButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+  m_pushButton->setPopupMode(QToolButton::MenuButtonPopup);
   m_pushButton->setIcon(
       QApplication::style()->standardIcon(QStyle::SP_ArrowUp));
   m_pushButton->setEnabled(false);
@@ -184,6 +187,22 @@ MainWindow::MainWindow(QWidget *parent)
 
   m_pullButton->setText(tr("Pull"));
 
+  auto *pushMenu = new QMenu(this);
+  auto *pushNormal = pushMenu->addAction(tr("Push"));
+  auto *pushForce = pushMenu->addAction(tr("Force push"));
+  auto *pushLease = pushMenu->addAction(tr("Push with lease"));
+  auto *pushGroup = new QActionGroup(this);
+  pushGroup->setExclusive(true);
+  for (auto *action : {pushNormal, pushForce, pushLease}) {
+    action->setCheckable(true);
+    pushGroup->addAction(action);
+  }
+  pushNormal->setData(QStringLiteral("push"));
+  pushForce->setData(QStringLiteral("force"));
+  pushLease->setData(QStringLiteral("lease"));
+  pushNormal->setChecked(true);
+  m_pushButton->setMenu(pushMenu);
+
   auto *pullMenu = new QMenu(this);
   auto *ffIfPossible =
       pullMenu->addAction(tr("Pull (fast-forward if possible)"));
@@ -203,14 +222,60 @@ MainWindow::MainWindow(QWidget *parent)
   fetchAll->setData(QStringLiteral("fetchAll"));
   ffIfPossible->setChecked(true);
   m_pullButton->setMenu(pullMenu);
+
+  pullMenu->addSeparator();
+  auto *fetchFromAction = pullMenu->addAction(tr("Fetch from..."));
+  connect(fetchFromAction, &QAction::triggered, this, [this] {
+    if (m_currentPath.isEmpty())
+      return;
+    const QStringList remotes = runGit(m_currentPath, {"remote"});
+    if (remotes.isEmpty()) {
+      QMessageBox::warning(this, tr("No remotes"),
+                           tr("There are no remotes to fetch from."));
+      return;
+    }
+    bool ok;
+    const QString remote = QInputDialog::getItem(
+        this, tr("Fetch from Remote"), tr("Remote:"), remotes, 0, false, &ok);
+    if (ok && !remote.isEmpty()) {
+      if (execGit(m_currentPath, {"fetch", remote})) {
+        loadRepository(m_currentPath);
+        statusBar()->showMessage(tr("Fetched from %1").arg(remote));
+      } else {
+        statusBar()->showMessage(tr("Failed to fetch from %1").arg(remote));
+      }
+    }
+  });
+
   m_pullArgs.clear();
   m_pullArgs << "pull";
 
-  connect(m_pushButton, &QPushButton::clicked, this, [this] {
+  m_pushArgs.clear();
+  m_pushArgs << "push";
+
+  connect(pushGroup, &QActionGroup::triggered, this, [this](QAction *action) {
+    if (!action)
+      return;
+    const QString mode = action->data().toString();
+    m_pushArgs.clear();
+    if (mode == QStringLiteral("push")) {
+      m_pushArgs << QStringLiteral("push");
+      m_pushButton->setText(tr("Push"));
+    } else if (mode == QStringLiteral("force")) {
+      m_pushArgs << QStringLiteral("push") << QStringLiteral("-f");
+      m_pushButton->setText(tr("Force push"));
+    } else if (mode == QStringLiteral("lease")) {
+      m_pushArgs << QStringLiteral("push")
+                 << QStringLiteral("--force-with-lease");
+      m_pushButton->setText(tr("Push with lease"));
+    }
+  });
+
+  connect(m_pushButton, &QToolButton::clicked, this, [this] {
     if (m_currentPath.isEmpty())
       return;
     QString output;
-    if (execGit(m_currentPath, {"push"}, &output)) {
+    if (execGit(m_currentPath, m_pushArgs, &output)) {
       const QString currentBranch =
           runGit(m_currentPath, {"rev-parse", "--abbrev-ref", "HEAD"}).value(0);
       const QString remote =
@@ -221,7 +286,7 @@ MainWindow::MainWindow(QWidget *parent)
       if (!remote.isEmpty() && !currentBranch.isEmpty())
         execGit(m_currentPath, {"fetch", remote, currentBranch});
       loadRepository(m_currentPath);
-      statusBar()->showMessage(tr("Pushed"));
+      statusBar()->showMessage(m_pushButton->text());
     } else {
       QMessageBox::warning(this, tr("Push failed"), output);
     }
@@ -2008,7 +2073,8 @@ void MainWindow::showUnstagedContextMenu(const QPoint &pos) {
     stageHunksAction = menu.addAction(tr("Stage hunks"));
   }
   QAction *externalDiffAction = nullptr;
-  if (!isFolder && !runGit(m_currentPath, {"config", "diff.tool"}).isEmpty()) {
+  if (!isFolder && hasTracked &&
+      !runGit(m_currentPath, {"config", "diff.tool"}).isEmpty()) {
     externalDiffAction = menu.addAction(tr("Open in external diff tool"));
   }
 
@@ -2366,9 +2432,22 @@ void MainWindow::showCommitFilesContextMenu(const QPoint &pos) {
 
   const QString path = itemPath(m_commitFilesTree, item);
   QMenu menu(this);
+  auto *externalDiffAction =
+      !runGit(m_currentPath, {"config", "diff.tool"}).isEmpty()
+          ? menu.addAction(tr("View diff in external diff tool"))
+          : nullptr;
+  if (externalDiffAction)
+    menu.addSeparator();
   auto *blameAction = menu.addAction(tr("Blame"));
-  if (menu.exec(m_commitFilesTree->mapToGlobal(pos)) == blameAction)
+  auto *selected = menu.exec(m_commitFilesTree->mapToGlobal(pos));
+
+  if (selected == externalDiffAction) {
+    launchGitTool({QStringLiteral("difftool"), QStringLiteral("-y"),
+                   m_selectedCommitSha + QLatin1Char('^'), m_selectedCommitSha,
+                   QStringLiteral("--"), path});
+  } else if (selected == blameAction) {
     showBlame(path, m_selectedCommitSha);
+  }
 }
 
 void MainWindow::showBlame(const QString &path, const QString &revision) {
