@@ -3833,10 +3833,11 @@ void MainWindow::showReflog() {
   auto *table = new QTableWidget(entries.size(), 4, &dlg);
   table->setHorizontalHeaderLabels(
       {tr("SHA"), tr("Ref"), tr("Message"), tr("Action")});
-  table->setColumnWidth(0, 100);
-  table->setColumnWidth(1, 120);
-  table->setColumnWidth(3, 120);
-  table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
+  table->horizontalHeader()->setSectionResizeMode(
+      QHeaderView::ResizeToContents);
+  table->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+  table->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
+  table->setMinimumSize(100, 100);
   table->verticalHeader()->setVisible(false);
 
   for (int i = 0; i < entries.size(); ++i) {
@@ -3873,7 +3874,7 @@ void MainWindow::showReflog() {
                 menu.addAction(tr("Reset to %1").arg(sha.left(7)));
             auto *branchAction =
                 menu.addAction(tr("Create branch from %1").arg(sha.left(7)));
-            QAction *selected = menu.exec(table->viewport()->mapToGlobal(pos));
+            QAction *selected = menu.exec(table->mapToGlobal(pos));
             if (!selected)
               return;
             if (selected == checkoutAction) {
