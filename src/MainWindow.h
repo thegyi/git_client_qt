@@ -85,6 +85,7 @@ private:
                      int acceptedExitCode = 0) const;
   bool execGit(const QString &path, const QStringList &args,
                QString *output = nullptr) const;
+  void launchGitTool(const QStringList &args, bool reload = false);
   void loadStashes();
   void loadRemotes();
   void updateCommitButton();

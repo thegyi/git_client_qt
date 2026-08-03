@@ -1160,6 +1160,44 @@ bool MainWindow::execGit(const QString &path, const QStringList &args,
   return p.exitCode() == 0;
 }
 
+void MainWindow::launchGitTool(const QStringList &args, bool reload) {
+  if (m_currentPath.isEmpty() || args.isEmpty())
+    return;
+
+  const QString command = args.first();
+  QString configKey;
+  if (command == QStringLiteral("difftool"))
+    configKey = QStringLiteral("diff.tool");
+  else if (command == QStringLiteral("mergetool"))
+    configKey = QStringLiteral("merge.tool");
+  if (!configKey.isEmpty() &&
+      runGit(m_currentPath, {"config", configKey}).isEmpty()) {
+    statusBar()->showMessage(
+        tr("No %1 configured in Repository Settings").arg(configKey));
+    return;
+  }
+
+  auto *p = new QProcess(this);
+  p->setWorkingDirectory(m_currentPath);
+  QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+  env.insert(QStringLiteral("GIT_EDITOR"), QStringLiteral("true"));
+  p->setProcessEnvironment(env);
+  connect(p, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+          this, [this, p, reload](int, QProcess::ExitStatus) {
+            p->deleteLater();
+            if (reload)
+              loadRepository(m_currentPath);
+          });
+  connect(p, &QProcess::errorOccurred, this, [this, p](QProcess::ProcessError) {
+    statusBar()->showMessage(tr("Failed to launch external tool"));
+    p->deleteLater();
+  });
+  p->start(QStringLiteral("git"),
+           QStringList{QStringLiteral("-C"), m_currentPath} + args);
+  if (p->state() == QProcess::NotRunning)
+    statusBar()->showMessage(tr("Failed to start external tool"));
+}
+
 void MainWindow::showBranchContextMenu(const QPoint &pos) {
   QTreeWidgetItem *item = m_repoPanel->itemAt(pos);
   if (!item) {
@@ -1969,6 +2007,10 @@ void MainWindow::showUnstagedContextMenu(const QPoint &pos) {
   if (!isFolder && hasTracked) {
     stageHunksAction = menu.addAction(tr("Stage hunks"));
   }
+  QAction *externalDiffAction = nullptr;
+  if (!isFolder && !runGit(m_currentPath, {"config", "diff.tool"}).isEmpty()) {
+    externalDiffAction = menu.addAction(tr("Open in external diff tool"));
+  }
 
   QAction *selected = menu.exec(m_unstagedTree->mapToGlobal(pos));
   if (selected == stageAction) {
@@ -1991,6 +2033,8 @@ void MainWindow::showUnstagedContextMenu(const QPoint &pos) {
     }
     if (ok) {
       loadWorkingTree();
+      if (m_diffView)
+        m_diffView->clear();
     }
   } else if (selected == ignoreAction) {
     const QString pattern = isFolder ? path + '/' : path;
@@ -2005,6 +2049,9 @@ void MainWindow::showUnstagedContextMenu(const QPoint &pos) {
     showBlame(path);
   } else if (selected == stageHunksAction) {
     showHunkStaging(path, false);
+  } else if (selected == externalDiffAction) {
+    launchGitTool({QStringLiteral("difftool"), QStringLiteral("-y"),
+                   QStringLiteral("--"), path});
   }
 }
 
@@ -2118,6 +2165,10 @@ void MainWindow::showStagedContextMenu(const QPoint &pos) {
   if (!isFolder) {
     blameAction = menu.addAction(tr("Blame"));
   }
+  QAction *externalDiffAction = nullptr;
+  if (!isFolder && !runGit(m_currentPath, {"config", "diff.tool"}).isEmpty()) {
+    externalDiffAction = menu.addAction(tr("Open in external diff tool"));
+  }
   QAction *selected = menu.exec(m_stagedTree->mapToGlobal(pos));
   if (selected == unstageAction) {
     if (execGit(m_currentPath, {"reset", "HEAD", "--", path})) {
@@ -2127,6 +2178,9 @@ void MainWindow::showStagedContextMenu(const QPoint &pos) {
     showHunkStaging(path, true);
   } else if (selected == blameAction) {
     showBlame(path);
+  } else if (selected == externalDiffAction) {
+    launchGitTool({QStringLiteral("difftool"), QStringLiteral("-y"),
+                   QStringLiteral("--cached"), QStringLiteral("--"), path});
   }
 }
 
@@ -2847,6 +2901,8 @@ void MainWindow::showRepositorySettings() {
   autocrlfCombo->setEditable(true);
   autocrlfCombo->addItems({QString(), QStringLiteral("true"),
                            QStringLiteral("false"), QStringLiteral("input")});
+  auto *diffToolEdit = new QLineEdit(&dlg);
+  auto *mergeToolEdit = new QLineEdit(&dlg);
 
   nameEdit->setText(runGit(m_currentPath, {"config", "user.name"}).value(0));
   emailEdit->setText(runGit(m_currentPath, {"config", "user.email"}).value(0));
@@ -2854,11 +2910,17 @@ void MainWindow::showRepositorySettings() {
       runGit(m_currentPath, {"config", "init.defaultBranch"}).value(0));
   autocrlfCombo->setCurrentText(
       runGit(m_currentPath, {"config", "core.autocrlf"}).value(0));
+  diffToolEdit->setText(
+      runGit(m_currentPath, {"config", "diff.tool"}).value(0));
+  mergeToolEdit->setText(
+      runGit(m_currentPath, {"config", "merge.tool"}).value(0));
 
   form->addRow(tr("User name:"), nameEdit);
   form->addRow(tr("User email:"), emailEdit);
   form->addRow(tr("Default branch:"), branchEdit);
   form->addRow(tr("Auto CRLF:"), autocrlfCombo);
+  form->addRow(tr("Diff tool:"), diffToolEdit);
+  form->addRow(tr("Merge tool:"), mergeToolEdit);
   layout->addLayout(form);
 
   auto *buttons = new QDialogButtonBox(
@@ -2882,6 +2944,8 @@ void MainWindow::showRepositorySettings() {
   setConfig(QStringLiteral("user.email"), emailEdit->text());
   setConfig(QStringLiteral("init.defaultBranch"), branchEdit->text());
   setConfig(QStringLiteral("core.autocrlf"), autocrlfCombo->currentText());
+  setConfig(QStringLiteral("diff.tool"), diffToolEdit->text());
+  setConfig(QStringLiteral("merge.tool"), mergeToolEdit->text());
 
   statusBar()->showMessage(tr("Repository settings saved"));
 }
@@ -3220,8 +3284,18 @@ void MainWindow::cherryPickCommit(const QString &sha) {
       tr("Resolve the conflicts in the working tree, then continue or abort."));
   box.setDetailedText(conflicted.join(QLatin1Char('\n')));
   auto *continueBtn = box.addButton(tr("Continue"), QMessageBox::AcceptRole);
+  const bool hasMergeTool =
+      !runGit(m_currentPath, {"config", "merge.tool"}).isEmpty();
+  auto *mergeToolBtn = hasMergeTool ? box.addButton(tr("Launch merge tool"),
+                                                    QMessageBox::ActionRole)
+                                    : nullptr;
   auto *abortBtn = box.addButton(tr("Abort"), QMessageBox::RejectRole);
   box.exec();
+
+  if (mergeToolBtn && box.clickedButton() == mergeToolBtn) {
+    launchGitTool({QStringLiteral("mergetool"), QStringLiteral("-y")}, true);
+    return;
+  }
 
   if (box.clickedButton() == continueBtn) {
     QProcess p;
@@ -3272,8 +3346,18 @@ void MainWindow::revertCommit(const QString &sha) {
       tr("Resolve the conflicts in the working tree, then continue or abort."));
   box.setDetailedText(conflicted.join(QLatin1Char('\n')));
   auto *continueBtn = box.addButton(tr("Continue"), QMessageBox::AcceptRole);
+  const bool hasMergeTool =
+      !runGit(m_currentPath, {"config", "merge.tool"}).isEmpty();
+  auto *mergeToolBtn = hasMergeTool ? box.addButton(tr("Launch merge tool"),
+                                                    QMessageBox::ActionRole)
+                                    : nullptr;
   auto *abortBtn = box.addButton(tr("Abort"), QMessageBox::RejectRole);
   box.exec();
+
+  if (mergeToolBtn && box.clickedButton() == mergeToolBtn) {
+    launchGitTool({QStringLiteral("mergetool"), QStringLiteral("-y")}, true);
+    return;
+  }
 
   if (box.clickedButton() == continueBtn) {
     QProcess p;
