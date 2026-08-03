@@ -15,6 +15,7 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFileSystemWatcher>
 #include <QFont>
 #include <QFormLayout>
 #include <QFrame>
@@ -67,6 +68,17 @@ MainWindow::MainWindow(QWidget *parent)
   ui->setupUi(this);
   setStyleSheet("QMainWindow::separator { background: #808080; width: 4px; }"
                 "QMenu::item { padding: 6px 24px 6px 12px; }");
+
+  m_watcher = new QFileSystemWatcher(this);
+  m_fsDebounceTimer = new QTimer(this);
+  m_fsDebounceTimer->setSingleShot(true);
+  m_fsDebounceTimer->setInterval(500);
+  connect(m_watcher, &QFileSystemWatcher::directoryChanged, this,
+          [this](const QString &) { m_fsDebounceTimer->start(); });
+  connect(m_fsDebounceTimer, &QTimer::timeout, this, [this]() {
+    if (!m_currentPath.isEmpty())
+      loadRepository(m_currentPath);
+  });
 
   m_recentMenu = new QMenu(tr("Recent Repositories"), this);
   ui->menuFile->insertMenu(ui->actionClose, m_recentMenu);
@@ -747,6 +759,17 @@ void MainWindow::loadRepository(const QString &path) {
     return;
   }
   m_currentPath = repoRoot;
+  if (m_watcher) {
+    m_watcher->removePaths(m_watcher->directories());
+    if (!m_currentPath.isEmpty())
+      m_watcher->addPath(m_currentPath);
+    const QString gitDir = m_currentPath + QLatin1String("/.git");
+    if (QFileInfo::exists(gitDir))
+      m_watcher->addPath(gitDir);
+    const QString refsDir = m_currentPath + QLatin1String("/.git/refs");
+    if (QFileInfo::exists(refsDir))
+      m_watcher->addPath(refsDir);
+  }
   QSettings settings("GitClientQt", "GitClientQt");
   settings.setValue("lastRepo", m_currentPath);
 
@@ -1949,6 +1972,8 @@ void MainWindow::showRemotesContextMenu(const QPoint &pos) {
     const QString remoteName = item->data(0, Qt::UserRole).toString();
     const QString currentUrl = item->data(0, Qt::UserRole + 1).toString();
     auto *editAction = menu.addAction(tr("Edit URL"));
+    auto *renameAction = menu.addAction(tr("Rename"));
+    auto *pruneAction = menu.addAction(tr("Prune"));
     auto *removeAction = menu.addAction(tr("Remove Remote"));
     QAction *selected = menu.exec(m_repoPanel->viewport()->mapToGlobal(pos));
 
@@ -1965,6 +1990,29 @@ void MainWindow::showRemotesContextMenu(const QPoint &pos) {
           statusBar()->showMessage(
               tr("Failed to update remote %1").arg(remoteName));
         }
+      }
+    } else if (selected == renameAction) {
+      bool ok;
+      const QString newName =
+          QInputDialog::getText(this, tr("Rename Remote"), tr("New name:"),
+                                QLineEdit::Normal, remoteName, &ok);
+      if (ok && !newName.isEmpty() && newName != remoteName) {
+        if (execGit(m_currentPath, {"remote", "rename", remoteName, newName})) {
+          loadRemotes();
+          statusBar()->showMessage(
+              tr("Remote %1 renamed to %2").arg(remoteName, newName));
+        } else {
+          statusBar()->showMessage(
+              tr("Failed to rename remote %1").arg(remoteName));
+        }
+      }
+    } else if (selected == pruneAction) {
+      if (execGit(m_currentPath, {"remote", "prune", remoteName})) {
+        loadRepository(m_currentPath);
+        statusBar()->showMessage(tr("Remote %1 pruned").arg(remoteName));
+      } else {
+        statusBar()->showMessage(
+            tr("Failed to prune remote %1").arg(remoteName));
       }
     } else if (selected == removeAction) {
       if (QMessageBox::question(this, tr("Remove Remote"),

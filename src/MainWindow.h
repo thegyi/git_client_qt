@@ -8,7 +8,9 @@
 class QPoint;
 class QIcon;
 class QMenu;
+class QFileSystemWatcher;
 class QPushButton;
+class QTimer;
 class QToolButton;
 class QLineEdit;
 class QTextEdit;
@@ -108,6 +110,8 @@ private:
   QSet<QString> m_unpushedShas;
   QSet<QString> m_unpulledShas;
   QTableWidget *m_commitTable = nullptr;
+  QFileSystemWatcher *m_watcher = nullptr;
+  QTimer *m_fsDebounceTimer = nullptr;
   QTreeWidget *m_unstagedTree = nullptr;
   QTreeWidget *m_stagedTree = nullptr;
   QTreeWidget *m_commitFilesTree = nullptr;
