@@ -130,6 +130,12 @@ MainWindow::MainWindow(QWidget *parent)
   reflogAction->setStatusTip(tr("View the reference log"));
   connect(reflogAction, &QAction::triggered, this, &MainWindow::showReflog);
 
+  auto *resolveConflictsAction =
+      repositoryMenu->addAction(tr("Resolve conflicts..."));
+  resolveConflictsAction->setStatusTip(tr("Resolve merge conflicts"));
+  connect(resolveConflictsAction, &QAction::triggered, this,
+          [this]() { showConflictResolver(QString()); });
+
   ui->actionOpen->setShortcut(QKeySequence::Open);
   ui->actionOpen->setStatusTip(tr("Open an existing Git repository"));
   ui->actionClose->setShortcut(QKeySequence::Close);
@@ -3699,6 +3705,128 @@ void MainWindow::showInteractiveRebase(const QString &baseSha) {
   }
 }
 
+void MainWindow::showConflictResolver(const QString &operation) {
+  if (m_currentPath.isEmpty())
+    return;
+
+  QDialog dlg(this);
+  dlg.setWindowTitle(tr("Resolve conflicts"));
+  auto *layout = new QVBoxLayout(&dlg);
+
+  layout->addWidget(new QLabel(tr("Conflicted files:"), &dlg));
+  auto *list = new QListWidget(&dlg);
+  list->setSelectionMode(QAbstractItemView::SingleSelection);
+  layout->addWidget(list);
+
+  auto *btnLayout = new QHBoxLayout;
+  auto *oursBtn = new QPushButton(tr("Use ours"), &dlg);
+  auto *theirsBtn = new QPushButton(tr("Use theirs"), &dlg);
+  auto *resolvedBtn = new QPushButton(tr("Mark resolved"), &dlg);
+  auto *toolBtn = new QPushButton(tr("Open in merge tool"), &dlg);
+  auto *continueBtn = new QPushButton(tr("Continue"), &dlg);
+  auto *abortBtn = new QPushButton(tr("Abort"), &dlg);
+  btnLayout->addWidget(oursBtn);
+  btnLayout->addWidget(theirsBtn);
+  btnLayout->addWidget(resolvedBtn);
+  btnLayout->addWidget(toolBtn);
+  btnLayout->addStretch();
+  btnLayout->addWidget(continueBtn);
+  btnLayout->addWidget(abortBtn);
+  layout->addLayout(btnLayout);
+
+  continueBtn->setVisible(!operation.isEmpty());
+  abortBtn->setVisible(!operation.isEmpty());
+
+  auto refresh = [&]() {
+    list->clear();
+    for (const QString &file :
+         runGit(m_currentPath, {"diff", "--name-only", "--diff-filter=U"}))
+      list->addItem(file);
+    const bool hasSelection = list->currentItem() != nullptr;
+    const bool hasMergeTool =
+        !runGit(m_currentPath, {"config", "merge.tool"}).isEmpty();
+    oursBtn->setEnabled(hasSelection);
+    theirsBtn->setEnabled(hasSelection);
+    resolvedBtn->setEnabled(hasSelection);
+    toolBtn->setEnabled(hasSelection && hasMergeTool);
+    continueBtn->setEnabled(!operation.isEmpty());
+    abortBtn->setEnabled(!operation.isEmpty());
+  };
+
+  refresh();
+  connect(list, &QListWidget::itemSelectionChanged, refresh);
+
+  connect(oursBtn, &QPushButton::clicked, this, [&]() {
+    auto *item = list->currentItem();
+    if (!item)
+      return;
+    const QString file = item->text();
+    execGit(m_currentPath, {"checkout", "--ours", "--", file});
+    execGit(m_currentPath, {"add", "--", file});
+    refresh();
+  });
+
+  connect(theirsBtn, &QPushButton::clicked, this, [&]() {
+    auto *item = list->currentItem();
+    if (!item)
+      return;
+    const QString file = item->text();
+    execGit(m_currentPath, {"checkout", "--theirs", "--", file});
+    execGit(m_currentPath, {"add", "--", file});
+    refresh();
+  });
+
+  connect(resolvedBtn, &QPushButton::clicked, this, [&]() {
+    auto *item = list->currentItem();
+    if (!item)
+      return;
+    const QString file = item->text();
+    execGit(m_currentPath, {"add", "--", file});
+    refresh();
+  });
+
+  connect(toolBtn, &QPushButton::clicked, this, [&]() {
+    auto *item = list->currentItem();
+    if (!item)
+      return;
+    const QString file = item->text();
+    launchGitTool({QStringLiteral("mergetool"), QStringLiteral("-y"),
+                   QStringLiteral("--"), file},
+                  false);
+  });
+
+  connect(continueBtn, &QPushButton::clicked, this, [&]() {
+    QProcess p;
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert(QStringLiteral("GIT_EDITOR"), QStringLiteral("true"));
+    p.setProcessEnvironment(env);
+    p.start(QStringLiteral("git"),
+            QStringList{QStringLiteral("-C"), m_currentPath, operation,
+                        QStringLiteral("--continue")});
+    if (p.waitForStarted(5000) && p.waitForFinished(120000) &&
+        p.exitStatus() == QProcess::NormalExit && p.exitCode() == 0) {
+      loadRepository(m_currentPath);
+      dlg.accept();
+      statusBar()->showMessage(tr("%1 completed").arg(operation));
+    } else {
+      QMessageBox::warning(&dlg, tr("Continue failed"),
+                           QString::fromLocal8Bit(p.readAllStandardError()));
+      refresh();
+    }
+  });
+
+  connect(abortBtn, &QPushButton::clicked, this, [&]() {
+    if (execGit(m_currentPath, {operation, QStringLiteral("--abort")})) {
+      loadRepository(m_currentPath);
+      dlg.accept();
+      statusBar()->showMessage(tr("%1 aborted").arg(operation));
+    }
+  });
+
+  dlg.resize(600, 400);
+  dlg.exec();
+}
+
 void MainWindow::cherryPickCommit(const QString &sha) {
   if (m_currentPath.isEmpty() || sha.isEmpty())
     return;
@@ -3717,48 +3845,7 @@ void MainWindow::cherryPickCommit(const QString &sha) {
     return;
   }
 
-  QMessageBox box(this);
-  box.setWindowTitle(tr("Cherry-pick has conflicts"));
-  box.setText(
-      tr("Resolve the conflicts in the working tree, then continue or abort."));
-  box.setDetailedText(conflicted.join(QLatin1Char('\n')));
-  auto *continueBtn = box.addButton(tr("Continue"), QMessageBox::AcceptRole);
-  const bool hasMergeTool =
-      !runGit(m_currentPath, {"config", "merge.tool"}).isEmpty();
-  auto *mergeToolBtn = hasMergeTool ? box.addButton(tr("Launch merge tool"),
-                                                    QMessageBox::ActionRole)
-                                    : nullptr;
-  auto *abortBtn = box.addButton(tr("Abort"), QMessageBox::RejectRole);
-  box.exec();
-
-  if (mergeToolBtn && box.clickedButton() == mergeToolBtn) {
-    launchGitTool({QStringLiteral("mergetool"), QStringLiteral("-y")}, true);
-    return;
-  }
-
-  if (box.clickedButton() == continueBtn) {
-    QProcess p;
-    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-    env.insert(QStringLiteral("GIT_EDITOR"), QStringLiteral("true"));
-    p.setProcessEnvironment(env);
-    p.start(QStringLiteral("git"),
-            QStringList{QStringLiteral("-C"), m_currentPath,
-                        QStringLiteral("cherry-pick"),
-                        QStringLiteral("--continue")});
-    if (p.waitForStarted(5000) && p.waitForFinished(120000) &&
-        p.exitStatus() == QProcess::NormalExit && p.exitCode() == 0) {
-      loadRepository(m_currentPath);
-      statusBar()->showMessage(tr("Cherry-pick completed"));
-    } else {
-      QMessageBox::warning(this, tr("Cherry-pick continue failed"),
-                           QString::fromLocal8Bit(p.readAllStandardError()));
-    }
-  } else if (box.clickedButton() == abortBtn) {
-    if (execGit(m_currentPath, {"cherry-pick", "--abort"})) {
-      loadRepository(m_currentPath);
-      statusBar()->showMessage(tr("Cherry-pick aborted"));
-    }
-  }
+  showConflictResolver(QStringLiteral("cherry-pick"));
 }
 
 void MainWindow::revertCommit(const QString &sha) {
@@ -3779,48 +3866,7 @@ void MainWindow::revertCommit(const QString &sha) {
     return;
   }
 
-  QMessageBox box(this);
-  box.setWindowTitle(tr("Revert has conflicts"));
-  box.setText(
-      tr("Resolve the conflicts in the working tree, then continue or abort."));
-  box.setDetailedText(conflicted.join(QLatin1Char('\n')));
-  auto *continueBtn = box.addButton(tr("Continue"), QMessageBox::AcceptRole);
-  const bool hasMergeTool =
-      !runGit(m_currentPath, {"config", "merge.tool"}).isEmpty();
-  auto *mergeToolBtn = hasMergeTool ? box.addButton(tr("Launch merge tool"),
-                                                    QMessageBox::ActionRole)
-                                    : nullptr;
-  auto *abortBtn = box.addButton(tr("Abort"), QMessageBox::RejectRole);
-  box.exec();
-
-  if (mergeToolBtn && box.clickedButton() == mergeToolBtn) {
-    launchGitTool({QStringLiteral("mergetool"), QStringLiteral("-y")}, true);
-    return;
-  }
-
-  if (box.clickedButton() == continueBtn) {
-    QProcess p;
-    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-    env.insert(QStringLiteral("GIT_EDITOR"), QStringLiteral("true"));
-    p.setProcessEnvironment(env);
-    p.start(QStringLiteral("git"),
-            QStringList{QStringLiteral("-C"), m_currentPath,
-                        QStringLiteral("revert"),
-                        QStringLiteral("--continue")});
-    if (p.waitForStarted(5000) && p.waitForFinished(120000) &&
-        p.exitStatus() == QProcess::NormalExit && p.exitCode() == 0) {
-      loadRepository(m_currentPath);
-      statusBar()->showMessage(tr("Revert completed"));
-    } else {
-      QMessageBox::warning(this, tr("Revert continue failed"),
-                           QString::fromLocal8Bit(p.readAllStandardError()));
-    }
-  } else if (box.clickedButton() == abortBtn) {
-    if (execGit(m_currentPath, {"revert", "--abort"})) {
-      loadRepository(m_currentPath);
-      statusBar()->showMessage(tr("Revert aborted"));
-    }
-  }
+  showConflictResolver(QStringLiteral("revert"));
 }
 
 void MainWindow::showReflog() {
