@@ -75,6 +75,8 @@ MainWindow::MainWindow(QWidget *parent)
   m_fsDebounceTimer->setInterval(500);
   connect(m_watcher, &QFileSystemWatcher::directoryChanged, this,
           [this](const QString &) { m_fsDebounceTimer->start(); });
+  connect(m_watcher, &QFileSystemWatcher::fileChanged, this,
+          [this](const QString &) { m_fsDebounceTimer->start(); });
   connect(m_fsDebounceTimer, &QTimer::timeout, this, [this]() {
     if (!m_currentPath.isEmpty() && repositoryStateChanged())
       loadRepository(m_currentPath);
@@ -750,7 +752,8 @@ bool MainWindow::repositoryStateChanged() const {
       runGit(m_currentPath, {"rev-parse", "@{u}"}).value(0);
   const QString status =
       runGit(m_currentPath, {"status", "--porcelain"}).join('\n');
-  const QString signature = head + '|' + upstream + '|' + status;
+  const QString tags = runGit(m_currentPath, {"tag", "--list"}).join('\n');
+  const QString signature = head + '|' + upstream + '|' + status + '|' + tags;
   return signature != m_lastRepoSignature;
 }
 
@@ -773,14 +776,22 @@ void MainWindow::loadRepository(const QString &path) {
   m_currentPath = repoRoot;
   if (m_watcher) {
     m_watcher->removePaths(m_watcher->directories());
-    if (!m_currentPath.isEmpty())
-      m_watcher->addPath(m_currentPath);
-    const QString gitDir = m_currentPath + QLatin1String("/.git");
-    if (QFileInfo::exists(gitDir))
-      m_watcher->addPath(gitDir);
-    const QString refsDir = m_currentPath + QLatin1String("/.git/refs");
-    if (QFileInfo::exists(refsDir))
-      m_watcher->addPath(refsDir);
+    m_watcher->removePaths(m_watcher->files());
+    const QStringList watchPaths = {
+        m_currentPath,
+        m_currentPath + QLatin1String("/.git"),
+        m_currentPath + QLatin1String("/.git/HEAD"),
+        m_currentPath + QLatin1String("/.git/index"),
+        m_currentPath + QLatin1String("/.git/packed-refs"),
+        m_currentPath + QLatin1String("/.git/refs"),
+        m_currentPath + QLatin1String("/.git/refs/heads"),
+        m_currentPath + QLatin1String("/.git/refs/remotes"),
+        m_currentPath + QLatin1String("/.git/refs/tags"),
+    };
+    for (const QString &p : watchPaths) {
+      if (QFileInfo::exists(p))
+        m_watcher->addPath(p);
+    }
   }
   QSettings settings("GitClientQt", "GitClientQt");
   settings.setValue("lastRepo", m_currentPath);
@@ -1098,7 +1109,8 @@ void MainWindow::loadRepository(const QString &path) {
 
   const QString upstream = runGit(path, {"rev-parse", "@{u}"}).value(0);
   m_lastRepoSignature = m_localHeadSha + '|' + upstream + '|' +
-                        runGit(path, {"status", "--porcelain"}).join('\n');
+                        runGit(path, {"status", "--porcelain"}).join('\n') +
+                        '|' + runGit(path, {"tag", "--list"}).join('\n');
 
   statusBar()->showMessage(tr("Loaded: %1").arg(path));
 }
@@ -2121,6 +2133,7 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
       menu.addAction(tr("Interactive rebase from here"));
   auto *cherryPickAction = menu.addAction(tr("Cherry-pick this commit"));
   auto *revertAction = menu.addAction(tr("Revert this commit"));
+  auto *resetAction = menu.addAction(tr("Reset to this commit"));
   QAction *selected = menu.exec(m_commitTable->viewport()->mapToGlobal(pos));
 
   if (selected == checkoutAction) {
@@ -2175,6 +2188,31 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
 
   if (selected == revertAction) {
     revertCommit(sha);
+    return;
+  }
+
+  if (selected == resetAction) {
+    const QStringList modes = {tr("soft"), tr("mixed"), tr("hard")};
+    bool ok;
+    const QString mode =
+        QInputDialog::getItem(this, tr("Reset %1").arg(sha.left(7)),
+                              tr("Mode:"), modes, 1, false, &ok);
+    if (ok && !mode.isEmpty()) {
+      if (mode == tr("hard")) {
+        if (QMessageBox::question(this, tr("Confirm Hard Reset"),
+                                  tr("This will discard working tree changes. "
+                                     "Continue?")) != QMessageBox::Yes)
+          return;
+      }
+      QString output;
+      if (execGit(m_currentPath,
+                  {"reset", QStringLiteral("--%1").arg(mode), sha}, &output)) {
+        loadRepository(m_currentPath);
+        statusBar()->showMessage(tr("Reset %1 to %2").arg(mode, sha.left(7)));
+      } else {
+        QMessageBox::warning(this, tr("Reset failed"), output);
+      }
+    }
     return;
   }
 
