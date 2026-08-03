@@ -2034,6 +2034,7 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
   auto *interactiveRebaseAction =
       menu.addAction(tr("Interactive rebase from here"));
   auto *cherryPickAction = menu.addAction(tr("Cherry-pick this commit"));
+  auto *revertAction = menu.addAction(tr("Revert this commit"));
   QAction *selected = menu.exec(m_commitTable->viewport()->mapToGlobal(pos));
 
   if (selected == checkoutAction) {
@@ -2083,6 +2084,11 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
 
   if (selected == cherryPickAction) {
     cherryPickCommit(sha);
+    return;
+  }
+
+  if (selected == revertAction) {
+    revertCommit(sha);
     return;
   }
 
@@ -3077,6 +3083,58 @@ void MainWindow::cherryPickCommit(const QString &sha) {
     if (execGit(m_currentPath, {"cherry-pick", "--abort"})) {
       loadRepository(m_currentPath);
       statusBar()->showMessage(tr("Cherry-pick aborted"));
+    }
+  }
+}
+
+void MainWindow::revertCommit(const QString &sha) {
+  if (m_currentPath.isEmpty() || sha.isEmpty())
+    return;
+
+  QString output;
+  if (execGit(m_currentPath, {"revert", sha}, &output)) {
+    loadRepository(m_currentPath);
+    statusBar()->showMessage(tr("Reverted %1").arg(sha.left(7)));
+    return;
+  }
+
+  const QStringList conflicted =
+      runGit(m_currentPath, {"diff", "--name-only", "--diff-filter=U"});
+  if (conflicted.isEmpty()) {
+    QMessageBox::warning(this, tr("Revert failed"), output);
+    return;
+  }
+
+  QMessageBox box(this);
+  box.setWindowTitle(tr("Revert has conflicts"));
+  box.setText(
+      tr("Resolve the conflicts in the working tree, then continue or abort."));
+  box.setDetailedText(conflicted.join(QLatin1Char('\n')));
+  auto *continueBtn = box.addButton(tr("Continue"), QMessageBox::AcceptRole);
+  auto *abortBtn = box.addButton(tr("Abort"), QMessageBox::RejectRole);
+  box.exec();
+
+  if (box.clickedButton() == continueBtn) {
+    QProcess p;
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert(QStringLiteral("GIT_EDITOR"), QStringLiteral("true"));
+    p.setProcessEnvironment(env);
+    p.start(QStringLiteral("git"),
+            QStringList{QStringLiteral("-C"), m_currentPath,
+                        QStringLiteral("revert"),
+                        QStringLiteral("--continue")});
+    if (p.waitForStarted(5000) && p.waitForFinished(120000) &&
+        p.exitStatus() == QProcess::NormalExit && p.exitCode() == 0) {
+      loadRepository(m_currentPath);
+      statusBar()->showMessage(tr("Revert completed"));
+    } else {
+      QMessageBox::warning(this, tr("Revert continue failed"),
+                           QString::fromLocal8Bit(p.readAllStandardError()));
+    }
+  } else if (box.clickedButton() == abortBtn) {
+    if (execGit(m_currentPath, {"revert", "--abort"})) {
+      loadRepository(m_currentPath);
+      statusBar()->showMessage(tr("Revert aborted"));
     }
   }
 }
