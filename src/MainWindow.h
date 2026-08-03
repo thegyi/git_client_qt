@@ -67,6 +67,7 @@ private slots:
 
 private:
   void loadRepository(const QString &path);
+  bool repositoryStateChanged() const;
   void showHunkStaging(const QString &path, bool unstage);
   void restoreSettings();
   void savePullMode();
@@ -109,6 +110,7 @@ private:
   QString m_remoteBranchName;
   QSet<QString> m_unpushedShas;
   QSet<QString> m_unpulledShas;
+  QString m_lastRepoSignature;
   QTableWidget *m_commitTable = nullptr;
   QFileSystemWatcher *m_watcher = nullptr;
   QTimer *m_fsDebounceTimer = nullptr;

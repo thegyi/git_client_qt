@@ -76,7 +76,7 @@ MainWindow::MainWindow(QWidget *parent)
   connect(m_watcher, &QFileSystemWatcher::directoryChanged, this,
           [this](const QString &) { m_fsDebounceTimer->start(); });
   connect(m_fsDebounceTimer, &QTimer::timeout, this, [this]() {
-    if (!m_currentPath.isEmpty())
+    if (!m_currentPath.isEmpty() && repositoryStateChanged())
       loadRepository(m_currentPath);
   });
 
@@ -742,6 +742,18 @@ QStringList MainWindow::runGit(const QString &path, const QStringList &args,
       .split('\n', Qt::SkipEmptyParts);
 }
 
+bool MainWindow::repositoryStateChanged() const {
+  if (m_currentPath.isEmpty())
+    return true;
+  const QString head = runGit(m_currentPath, {"rev-parse", "HEAD"}).value(0);
+  const QString upstream =
+      runGit(m_currentPath, {"rev-parse", "@{u}"}).value(0);
+  const QString status =
+      runGit(m_currentPath, {"status", "--porcelain"}).join('\n');
+  const QString signature = head + '|' + upstream + '|' + status;
+  return signature != m_lastRepoSignature;
+}
+
 void MainWindow::loadRepository(const QString &path) {
   if (path.isEmpty())
     return;
@@ -1082,6 +1094,10 @@ void MainWindow::loadRepository(const QString &path) {
   updateFilter();
 
   loadWorkingTree();
+
+  const QString upstream = runGit(path, {"rev-parse", "@{u}"}).value(0);
+  m_lastRepoSignature = m_localHeadSha + '|' + upstream + '|' +
+                        runGit(path, {"status", "--porcelain"}).join('\n');
 
   statusBar()->showMessage(tr("Loaded: %1").arg(path));
 }
@@ -1453,6 +1469,7 @@ void MainWindow::showTagContextMenu(const QPoint &pos) {
   } else if (item->parent() == m_tagsItem) {
     const QString tagName = item->text(0);
     auto *checkoutAction = menu.addAction(tr("Checkout Tag %1").arg(tagName));
+    auto *pushAction = menu.addAction(tr("Push Tag %1").arg(tagName));
     auto *deleteAction = menu.addAction(tr("Delete Tag %1").arg(tagName));
     QAction *selected = menu.exec(m_repoPanel->viewport()->mapToGlobal(pos));
 
@@ -1463,6 +1480,25 @@ void MainWindow::showTagContextMenu(const QPoint &pos) {
         statusBar()->showMessage(tr("Checked out tag %1").arg(tagName));
       } else {
         QMessageBox::warning(this, tr("Checkout failed"), output);
+      }
+    } else if (selected == pushAction) {
+      const QStringList remotes = runGit(m_currentPath, {"remote"});
+      if (remotes.isEmpty()) {
+        QMessageBox::warning(this, tr("No remotes"),
+                             tr("There are no remotes to push to."));
+      } else {
+        bool okRemote;
+        const QString remote =
+            QInputDialog::getItem(this, tr("Push Tag %1").arg(tagName),
+                                  tr("Remote:"), remotes, 0, false, &okRemote);
+        if (okRemote && !remote.isEmpty()) {
+          if (execGit(m_currentPath, {"push", remote, tagName})) {
+            statusBar()->showMessage(
+                tr("Pushed tag %1 to %2").arg(tagName, remote));
+          } else {
+            statusBar()->showMessage(tr("Failed to push tag %1").arg(tagName));
+          }
+        }
       }
     } else if (selected == deleteAction) {
       if (execGit(m_currentPath, {"tag", "-d", tagName})) {
