@@ -132,6 +132,7 @@ private:
   QTextEdit *m_commitBody = nullptr;
   QPushButton *m_commitButton = nullptr;
   QCheckBox *m_amendCheckBox = nullptr;
+  QCheckBox *m_signCommitCheckBox = nullptr;
   QLabel *m_branchLabel = nullptr;
   QToolButton *m_pushButton = nullptr;
   QPushButton *m_undoButton = nullptr;

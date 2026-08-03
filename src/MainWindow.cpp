@@ -580,6 +580,8 @@ MainWindow::MainWindow(QWidget *parent)
   messageLayout->addWidget(m_commitBody);
   m_amendCheckBox = new QCheckBox(tr("Amend last commit"), this);
   messageLayout->addWidget(m_amendCheckBox);
+  m_signCommitCheckBox = new QCheckBox(tr("Sign with GPG"), this);
+  messageLayout->addWidget(m_signCommitCheckBox);
   m_commitButton = new QPushButton(tr("Commit"), this);
   m_commitButton->setIcon(
       QApplication::style()->standardIcon(QStyle::SP_DialogOkButton));
@@ -913,8 +915,12 @@ void MainWindow::showPreferences() {
       new QCheckBox(tr("Reopen last repository on startup"), &dlg);
   reopenBox->setChecked(settings.value("reopenLastRepo", true).toBool());
 
+  auto *gpgKeyEdit = new QLineEdit(&dlg);
+  gpgKeyEdit->setText(settings.value("gpgSigningKey").toString());
+
   layout->addRow(tr("Default pull mode:"), pullModeCombo);
   layout->addWidget(reopenBox);
+  layout->addRow(tr("GPG key ID or email:"), gpgKeyEdit);
 
   auto *buttons = new QDialogButtonBox(
       QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
@@ -928,6 +934,7 @@ void MainWindow::showPreferences() {
   const QString pullMode = pullModeCombo->currentData().toString();
   settings.setValue("pullMode", pullMode);
   settings.setValue("reopenLastRepo", reopenBox->isChecked());
+  settings.setValue("gpgSigningKey", gpgKeyEdit->text().trimmed());
 
   if (m_pullButton && m_pullButton->menu()) {
     for (QAction *action : m_pullButton->menu()->actions()) {
@@ -1065,6 +1072,11 @@ void MainWindow::loadRepository(const QString &path) {
     m_undoButton->setEnabled(true);
   if (m_pullButton)
     m_pullButton->setEnabled(true);
+  if (m_signCommitCheckBox) {
+    const QString gpgSign =
+        runGit(path, {"config", "--bool", "commit.gpgsign"}).value(0);
+    m_signCommitCheckBox->setChecked(gpgSign == QLatin1String("true"));
+  }
   m_repoPanel->clear();
 
   const QString currentBranch =
@@ -2100,10 +2112,27 @@ void MainWindow::onCommitClicked() {
   tempFile.write(message.toUtf8());
   tempFile.close();
 
-  const QStringList commitArgs =
+  QStringList commitArgs =
       (m_amendCheckBox && m_amendCheckBox->isChecked())
           ? QStringList{"commit", "--amend", "-F", tempFile.fileName()}
           : QStringList{"commit", "-F", tempFile.fileName()};
+  if (m_signCommitCheckBox && m_signCommitCheckBox->isChecked()) {
+    QString signingKey =
+        runGit(m_currentPath, {"config", "user.signingkey"}).value(0);
+    if (signingKey.isEmpty()) {
+      QSettings appSettings("GitClientQt", "GitClientQt");
+      signingKey = appSettings.value("gpgSigningKey").toString().trimmed();
+    }
+    if (signingKey.isEmpty()) {
+      signingKey = QInputDialog::getText(this, tr("GPG key"),
+                                         tr("GPG key ID or email:"));
+      if (signingKey.isEmpty())
+        return;
+      signingKey = signingKey.trimmed();
+      execGit(m_currentPath, {"config", "user.signingkey", signingKey});
+    }
+    commitArgs << QStringLiteral("--gpg-sign=%1").arg(signingKey);
+  }
   if (execGit(m_currentPath, commitArgs)) {
     m_commitSubject->clear();
     m_commitBody->clear();
