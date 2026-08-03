@@ -1720,6 +1720,7 @@ void MainWindow::showStashContextMenu(const QPoint &pos) {
   auto *popAction = menu.addAction(tr("Pop Stash"));
   auto *applyAction = menu.addAction(tr("Apply Stash"));
   auto *deleteAction = menu.addAction(tr("Delete Stash"));
+  auto *viewDiffAction = menu.addAction(tr("View diff"));
   QAction *selected = menu.exec(m_repoPanel->viewport()->mapToGlobal(pos));
 
   if (selected == popAction) {
@@ -1743,6 +1744,8 @@ void MainWindow::showStashContextMenu(const QPoint &pos) {
     } else {
       statusBar()->showMessage(tr("Failed to delete stash"));
     }
+  } else if (selected == viewDiffAction) {
+    showStashDiff(ref);
   }
 }
 
@@ -3006,6 +3009,32 @@ void MainWindow::loadRemotes() {
     child->setData(0, Qt::UserRole + 1, url);
     child->setText(0, QString("%1   %2").arg(name, url));
   }
+}
+
+void MainWindow::showStashDiff(const QString &ref) {
+  if (m_currentPath.isEmpty() || ref.isEmpty())
+    return;
+
+  QDialog dlg(this);
+  dlg.setWindowTitle(tr("Stash diff"));
+  auto *layout = new QVBoxLayout(&dlg);
+  auto *diffView = new QTextEdit(&dlg);
+  diffView->setReadOnly(true);
+  layout->addWidget(diffView);
+
+  auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dlg);
+  layout->addWidget(buttons);
+  connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+  const QStringList lines = runGit(m_currentPath, {"stash", "show", "-p", ref});
+  if (lines.isEmpty())
+    diffView->setHtml(
+        emptyStateHtml(tr("No diff"), tr("No changes in this stash.")));
+  else
+    diffView->setHtml(formatDiff(lines));
+
+  dlg.resize(900, 600);
+  dlg.exec();
 }
 
 void MainWindow::loadStashes() {

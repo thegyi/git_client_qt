@@ -97,6 +97,7 @@ private:
                QString *output = nullptr) const;
   void launchGitTool(const QStringList &args, bool reload = false);
   void loadStashes();
+  void showStashDiff(const QString &ref);
   void loadRemotes();
   void updateCommitButton();
   void updateFilter();
