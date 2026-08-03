@@ -44,6 +44,7 @@
 
 #include <QDateTime>
 #include <QDialog>
+#include <QDir>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QIcon>
@@ -2559,6 +2560,7 @@ void MainWindow::showSubmodulesContextMenu(const QPoint &pos) {
   auto *openAction = menu.addAction(tr("Open"));
   auto *initAction = menu.addAction(tr("Init"));
   auto *updateAction = menu.addAction(tr("Update"));
+  auto *removeAction = menu.addAction(tr("Remove"));
   selected = menu.exec(m_repoPanel->viewport()->mapToGlobal(pos));
   if (!selected)
     return;
@@ -2571,6 +2573,22 @@ void MainWindow::showSubmodulesContextMenu(const QPoint &pos) {
       statusBar()->showMessage(tr("Submodule %1 updated").arg(subPath));
     } else {
       statusBar()->showMessage(tr("Failed to update %1").arg(subPath));
+    }
+  } else if (selected == removeAction) {
+    if (QMessageBox::question(this, tr("Remove Submodule"),
+                              tr("Remove submodule %1?").arg(subPath),
+                              QMessageBox::Yes | QMessageBox::No) ==
+        QMessageBox::Yes) {
+      bool ok = execGit(m_currentPath, {"submodule", "deinit", "-f", subPath});
+      ok &= execGit(m_currentPath, {"rm", "-f", subPath});
+      QDir(m_currentPath + QLatin1String("/.git/modules/") + subPath)
+          .removeRecursively();
+      if (ok) {
+        loadRepository(m_currentPath);
+        statusBar()->showMessage(tr("Submodule %1 removed").arg(subPath));
+      } else {
+        statusBar()->showMessage(tr("Failed to remove %1").arg(subPath));
+      }
     }
   }
 }
