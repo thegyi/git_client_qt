@@ -88,15 +88,21 @@ MainWindow::MainWindow(QWidget *parent)
   auto *searchMenu = new QMenu(tr("Search"), this);
   menuBar()->addMenu(searchMenu);
   auto *grepAction = searchMenu->addAction(tr("Grep"));
+  grepAction->setStatusTip(tr("Search for a pattern in the repository"));
   grepAction->setShortcut(QKeySequence(QLatin1String("Ctrl+Shift+G")));
   connect(grepAction, &QAction::triggered, this, &MainWindow::onGrepRequested);
 
   auto *submodulesMenu = new QMenu(tr("Submodules"), this);
   menuBar()->addMenu(submodulesMenu);
   auto *initSubmodulesAction = submodulesMenu->addAction(tr("Init"));
+  initSubmodulesAction->setStatusTip(
+      tr("Initialize the configured submodules"));
   auto *updateSubmodulesAction = submodulesMenu->addAction(tr("Update"));
+  updateSubmodulesAction->setStatusTip(tr("Update registered submodules"));
   auto *addSubmoduleAction = submodulesMenu->addAction(tr("Add..."));
+  addSubmoduleAction->setStatusTip(tr("Add a new submodule to the repository"));
   auto *openSubmoduleAction = submodulesMenu->addAction(tr("Open..."));
+  openSubmoduleAction->setStatusTip(tr("Open the selected submodule"));
   connect(initSubmodulesAction, &QAction::triggered, this,
           &MainWindow::initSubmodules);
   connect(updateSubmodulesAction, &QAction::triggered, this,
@@ -108,35 +114,50 @@ MainWindow::MainWindow(QWidget *parent)
 
   auto *repositoryMenu = new QMenu(tr("Repository"), this);
   menuBar()->addMenu(repositoryMenu);
+
+  if (ui->menuHelp) {
+    menuBar()->removeAction(ui->menuHelp->menuAction());
+    menuBar()->addAction(ui->menuHelp->menuAction());
+  }
+
   auto *repoSettingsAction = repositoryMenu->addAction(tr("Settings..."));
+  repoSettingsAction->setStatusTip(tr("Configure repository settings"));
   repoSettingsAction->setShortcut(QKeySequence(QLatin1String("Ctrl+,")));
   connect(repoSettingsAction, &QAction::triggered, this,
           &MainWindow::showRepositorySettings);
 
   auto *reflogAction = repositoryMenu->addAction(tr("Reflog"));
+  reflogAction->setStatusTip(tr("View the reference log"));
   connect(reflogAction, &QAction::triggered, this, &MainWindow::showReflog);
 
   ui->actionOpen->setShortcut(QKeySequence::Open);
+  ui->actionOpen->setStatusTip(tr("Open an existing Git repository"));
   ui->actionClose->setShortcut(QKeySequence::Close);
+  ui->actionClose->setStatusTip(tr("Close the current repository"));
   ui->actionExit->setShortcut(QKeySequence::Quit);
+  ui->actionExit->setStatusTip(tr("Exit the application"));
   ui->actionPreferences->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Comma));
+  ui->actionPreferences->setStatusTip(tr("Open application preferences"));
 
   m_branchLabel = new QLabel(this);
   statusBar()->addPermanentWidget(m_branchLabel);
 
   auto *actionClone = new QAction(tr("Clone Repository"), this);
   ui->menuFile->insertAction(ui->actionOpen, actionClone);
+  actionClone->setStatusTip(tr("Clone a remote repository"));
   actionClone->setShortcut(QKeySequence(QLatin1String("Ctrl+Shift+N")));
   connect(actionClone, &QAction::triggered, this,
           &MainWindow::onCloneRepository);
 
   auto *actionInit = new QAction(tr("Initialize Repository"), this);
   ui->menuFile->insertAction(ui->actionExit, actionInit);
+  actionInit->setStatusTip(tr("Create a new Git repository"));
   actionInit->setShortcut(QKeySequence(QLatin1String("Ctrl+N")));
   connect(actionInit, &QAction::triggered, this, &MainWindow::onInitRepository);
 
   auto *editGitignoreAction = new QAction(tr("Edit .gitignore"), this);
   ui->menuFile->insertAction(ui->actionExit, editGitignoreAction);
+  editGitignoreAction->setStatusTip(tr("Edit the repository .gitignore file"));
   connect(editGitignoreAction, &QAction::triggered, this,
           &MainWindow::editGitignore);
 
@@ -153,19 +174,32 @@ MainWindow::MainWindow(QWidget *parent)
   remoteBar->setMovable(false);
   m_pushButton = new QToolButton(this);
   m_pushButton->setText(tr("Push"));
-  m_pushButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+  m_pushButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
   m_pushButton->setPopupMode(QToolButton::MenuButtonPopup);
   m_pushButton->setIcon(
       QApplication::style()->standardIcon(QStyle::SP_ArrowUp));
   m_pushButton->setEnabled(false);
+  m_pushButton->setToolTip(tr("Push changes to the remote repository"));
+  m_pushButton->setStatusTip(
+      tr("Push the current branch to the configured upstream remote"));
   m_pushButton->setShortcut(QKeySequence(QLatin1String("Ctrl+Shift+P")));
   m_undoButton = new QPushButton(tr("Undo"), this);
+  m_undoButton->setIcon(
+      QApplication::style()->standardIcon(QStyle::SP_ArrowBack));
   m_undoButton->setEnabled(false);
+  m_undoButton->setToolTip(tr("Undo the last commit"));
+  m_undoButton->setStatusTip(
+      tr("Reset the last commit and keep the changes staged"));
   m_undoButton->setShortcut(QKeySequence(QLatin1String("Ctrl+Shift+Z")));
   m_pullButton = new QToolButton(this);
-  m_pullButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+  m_pullButton->setText(tr("Pull"));
+  m_pullButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
   m_pullButton->setPopupMode(QToolButton::MenuButtonPopup);
+  m_pullButton->setIcon(
+      QApplication::style()->standardIcon(QStyle::SP_ArrowDown));
   m_pullButton->setEnabled(false);
+  m_pullButton->setToolTip(tr("Pull changes from the remote"));
+  m_pullButton->setStatusTip(tr("Fetch and integrate the remote branch"));
   m_pullButton->setShortcut(QKeySequence(QLatin1String("Ctrl+Shift+L")));
   remoteBar->addWidget(m_pushButton);
   remoteBar->addWidget(m_undoButton);
@@ -189,8 +223,13 @@ MainWindow::MainWindow(QWidget *parent)
 
   auto *pushMenu = new QMenu(this);
   auto *pushNormal = pushMenu->addAction(tr("Push"));
+  pushNormal->setStatusTip(tr("Push the current branch to its remote"));
   auto *pushForce = pushMenu->addAction(tr("Force push"));
+  pushForce->setStatusTip(
+      tr("Force push and overwrite the remote branch history"));
   auto *pushLease = pushMenu->addAction(tr("Push with lease"));
+  pushLease->setStatusTip(
+      tr("Push only if the remote ref is at the expected state"));
   auto *pushGroup = new QActionGroup(this);
   pushGroup->setExclusive(true);
   for (auto *action : {pushNormal, pushForce, pushLease}) {
@@ -206,9 +245,14 @@ MainWindow::MainWindow(QWidget *parent)
   auto *pullMenu = new QMenu(this);
   auto *ffIfPossible =
       pullMenu->addAction(tr("Pull (fast-forward if possible)"));
+  ffIfPossible->setStatusTip(
+      tr("Pull using fast-forward when possible, otherwise merge"));
   auto *ffOnly = pullMenu->addAction(tr("Pull (fast-forward only)"));
+  ffOnly->setStatusTip(tr("Pull only if it can be fast-forwarded"));
   auto *rebase = pullMenu->addAction(tr("Pull (rebase)"));
+  rebase->setStatusTip(tr("Fetch and rebase the current branch"));
   auto *fetchAll = pullMenu->addAction(tr("Fetch all"));
+  fetchAll->setStatusTip(tr("Fetch all remotes"));
   fetchAll->setShortcut(QKeySequence(QLatin1String("Ctrl+Shift+F")));
   auto *actionGroup = new QActionGroup(this);
   actionGroup->setExclusive(true);
@@ -225,6 +269,7 @@ MainWindow::MainWindow(QWidget *parent)
 
   pullMenu->addSeparator();
   auto *fetchFromAction = pullMenu->addAction(tr("Fetch from..."));
+  fetchFromAction->setStatusTip(tr("Fetch from a selected remote"));
   connect(fetchFromAction, &QAction::triggered, this, [this] {
     if (m_currentPath.isEmpty())
       return;
@@ -404,10 +449,10 @@ MainWindow::MainWindow(QWidget *parent)
   });
 
   m_commitTable = new QTableWidget(this);
-  m_commitTable->setColumnCount(6);
-  m_commitTable->setHorizontalHeaderLabels({tr("Graph"), tr("Date"),
-                                            tr("Commit Message"), tr("Author"),
-                                            tr("Branches"), tr("SHA")});
+  m_commitTable->setColumnCount(7);
+  m_commitTable->setHorizontalHeaderLabels(
+      {tr("Graph"), tr("Date/Time"), tr("Date"), tr("Commit Message"),
+       tr("Author"), tr("Branches"), tr("SHA")});
   m_commitTable->horizontalHeader()->setVisible(false);
   m_commitTable->setSelectionBehavior(QAbstractItemView::SelectRows);
   m_commitTable->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -415,8 +460,11 @@ MainWindow::MainWindow(QWidget *parent)
   m_commitTable->verticalHeader()->setVisible(false);
   m_commitTable->horizontalHeader()->setSectionResizeMode(
       QHeaderView::ResizeToContents);
-  m_commitTable->setShowGrid(false);
+  m_commitTable->setShowGrid(true);
+  m_commitTable->setStyleSheet(
+      QStringLiteral("QTableView { gridline-color: #555555; }"));
   m_commitTable->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  m_commitTable->setAlternatingRowColors(true);
   m_commitTable->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
   connect(m_commitTable, &QTableWidget::cellClicked, this,
           [this](int row, int column) {
@@ -489,6 +537,7 @@ MainWindow::MainWindow(QWidget *parent)
           &MainWindow::showUnstagedContextMenu);
   connect(m_unstagedTree, &QTreeWidget::itemClicked, this,
           &MainWindow::onFileClicked);
+
   unstagedLayout->addWidget(m_unstagedTree);
   rightLayout->addWidget(unstagedGroup);
 
@@ -502,6 +551,7 @@ MainWindow::MainWindow(QWidget *parent)
           &MainWindow::showStagedContextMenu);
   connect(m_stagedTree, &QTreeWidget::itemClicked, this,
           &MainWindow::onFileClicked);
+
   stagedLayout->addWidget(m_stagedTree);
   rightLayout->addWidget(stagedGroup);
 
@@ -522,6 +572,8 @@ MainWindow::MainWindow(QWidget *parent)
   m_amendCheckBox = new QCheckBox(tr("Amend last commit"), this);
   messageLayout->addWidget(m_amendCheckBox);
   m_commitButton = new QPushButton(tr("Commit"), this);
+  m_commitButton->setIcon(
+      QApplication::style()->standardIcon(QStyle::SP_DialogOkButton));
   m_commitButton->setEnabled(false);
   m_commitButton->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Return));
   messageLayout->addWidget(m_commitButton);
@@ -538,6 +590,7 @@ MainWindow::MainWindow(QWidget *parent)
   connect(m_commitFilesTree, &QTreeWidget::itemClicked, this,
           &MainWindow::onCommitFileClicked);
   commitFilesLayout->addWidget(m_commitFilesTree);
+  showEmptyCommitFiles();
   rightLayout->addWidget(commitFilesGroup);
 
   connect(m_commitButton, &QPushButton::clicked, this,
@@ -561,6 +614,7 @@ MainWindow::MainWindow(QWidget *parent)
   m_diffView->setFont(QFont(QStringLiteral("monospace"), 10));
   m_diffView->setFrameStyle(QFrame::NoFrame);
   m_diffView->document()->setDocumentMargin(0);
+  showEmptyDiff();
 
   m_grepDock = new QDockWidget(tr("Grep"), this);
   m_grepDock->setMinimumHeight(200);
@@ -642,13 +696,11 @@ MainWindow::MainWindow(QWidget *parent)
     if (m_stagedTree)
       m_stagedTree->clear();
     if (m_diffView)
-      m_diffView->clear();
-    if (m_commitSubject)
-      m_commitSubject->clear();
+      showEmptyDiff();
     if (m_commitBody)
       m_commitBody->clear();
     if (m_commitFilesTree)
-      m_commitFilesTree->clear();
+      showEmptyCommitFiles();
     m_selectedCommitSha.clear();
     if (m_pushButton)
       m_pushButton->setEnabled(false);
@@ -971,9 +1023,9 @@ void MainWindow::loadRepository(const QString &path) {
 
   m_commitTable->clear();
   m_commitTable->setRowCount(0);
-  m_commitTable->setHorizontalHeaderLabels({tr("Graph"), tr("Date"),
-                                            tr("Commit Message"), tr("Author"),
-                                            tr("Branches"), tr("SHA")});
+  m_commitTable->setHorizontalHeaderLabels(
+      {tr("Graph"), tr("Date/Time"), tr("Date"), tr("Commit Message"),
+       tr("Author"), tr("Branches"), tr("SHA")});
   m_commitTable->horizontalHeader()->setVisible(true);
 
   QMap<QString, int> wipCounts;
@@ -998,9 +1050,13 @@ void MainWindow::loadRepository(const QString &path) {
     wipGraphItem->setFlags(wipGraphItem->flags() & ~Qt::ItemIsSelectable);
     m_commitTable->setItem(0, 0, wipGraphItem);
 
-    auto *wipDateItem = new QTableWidgetItem();
-    wipDateItem->setFlags(wipDateItem->flags() & ~Qt::ItemIsSelectable);
-    m_commitTable->setItem(0, 1, wipDateItem);
+    auto *wipDateTimeItem = new QTableWidgetItem();
+    wipDateTimeItem->setFlags(wipDateTimeItem->flags() & ~Qt::ItemIsSelectable);
+    m_commitTable->setItem(0, 1, wipDateTimeItem);
+
+    auto *wipRelativeItem = new QTableWidgetItem();
+    wipRelativeItem->setFlags(wipRelativeItem->flags() & ~Qt::ItemIsSelectable);
+    m_commitTable->setItem(0, 2, wipRelativeItem);
 
     auto *wipWidget = new QWidget(m_commitTable);
     auto *wipLayout = new QHBoxLayout(wipWidget);
@@ -1017,15 +1073,15 @@ void MainWindow::loadRepository(const QString &path) {
           new QLabel(QString::number(wipCounts.value(status)), wipWidget));
     }
     wipLayout->addStretch();
-    m_commitTable->setCellWidget(0, 2, wipWidget);
+    m_commitTable->setCellWidget(0, 3, wipWidget);
 
     auto *wipAuthorItem = new QTableWidgetItem();
     wipAuthorItem->setFlags(wipAuthorItem->flags() & ~Qt::ItemIsSelectable);
-    m_commitTable->setItem(0, 3, wipAuthorItem);
+    m_commitTable->setItem(0, 4, wipAuthorItem);
 
     auto *wipBranchesItem = new QTableWidgetItem();
     wipBranchesItem->setFlags(wipBranchesItem->flags() & ~Qt::ItemIsSelectable);
-    m_commitTable->setItem(0, 4, wipBranchesItem);
+    m_commitTable->setItem(0, 5, wipBranchesItem);
   }
 
   QProcess p;
@@ -1033,8 +1089,8 @@ void MainWindow::loadRepository(const QString &path) {
           QStringList{"-C", path} +
               QStringList{"log", "--all", "--graph", "--source", "--date-order",
                           "--date=format:%Y-%m-%d %H:%M:%S",
-                          "--pretty=format:%x1f%H%x1f%h%x1f%an%x1f%ad%x1f%s%"
-                          "x1f%b%x1f%S%x1e"});
+                          "--pretty=format:%x1f%H%x1f%h%x1f%an%x1f%ad%x1f%ar%"
+                          "x1f%s%x1f%b%x1f%S%x1e"});
   if (p.waitForFinished(10000) && p.exitCode() == 0) {
     const QString output =
         QString::fromLocal8Bit(p.readAllStandardOutput().trimmed());
@@ -1071,7 +1127,7 @@ void MainWindow::loadRepository(const QString &path) {
          output.split(QChar(0x1e), Qt::SkipEmptyParts)) {
       const QStringList fields =
           record.trimmed().split(QChar(0x1f), Qt::KeepEmptyParts);
-      if (fields.size() < 8) {
+      if (fields.size() < 9) {
         continue;
       }
 
@@ -1080,12 +1136,12 @@ void MainWindow::loadRepository(const QString &path) {
       const QString shortSha = fields.at(2);
       const QString author = fields.at(3);
       const QString date = fields.at(4);
-      QString subject = fields.at(5);
+      const QString relative = fields.at(5);
+      QString subject = fields.at(6);
       subject.remove("[skip ci]", Qt::CaseInsensitive);
       subject = subject.trimmed();
-      const QString body = fields.at(6).trimmed();
-
-      QString branchName = fields.at(7);
+      const QString body = fields.at(7).trimmed();
+      QString branchName = fields.at(8);
       if (branchName.startsWith("refs/heads/")) {
         branchName = branchName.mid(11);
       } else if (branchName.startsWith("refs/remotes/")) {
@@ -1138,36 +1194,46 @@ void MainWindow::loadRepository(const QString &path) {
         graphItem->setBackground(bgBrush);
       m_commitTable->setItem(row, 0, graphItem);
 
-      auto *dateItem = new QTableWidgetItem(date);
-      dateItem->setToolTip(tip);
+      auto *dateTimeItem = new QTableWidgetItem(date);
+      dateTimeItem->setToolTip(tip);
       if (bgBrush != QBrush())
-        dateItem->setBackground(bgBrush);
-      m_commitTable->setItem(row, 1, dateItem);
+        dateTimeItem->setBackground(bgBrush);
+      m_commitTable->setItem(row, 1, dateTimeItem);
+
+      auto *relativeDateItem = new QTableWidgetItem(relative);
+      relativeDateItem->setToolTip(tip);
+      if (bgBrush != QBrush())
+        relativeDateItem->setBackground(bgBrush);
+      m_commitTable->setItem(row, 2, relativeDateItem);
 
       auto *msgItem = new QTableWidgetItem(preview);
       msgItem->setToolTip(tip);
       if (bgBrush != QBrush())
         msgItem->setBackground(bgBrush);
-      m_commitTable->setItem(row, 2, msgItem);
+      m_commitTable->setItem(row, 3, msgItem);
 
       auto *authorItem = new QTableWidgetItem(author);
       authorItem->setToolTip(tip);
       if (bgBrush != QBrush())
         authorItem->setBackground(bgBrush);
-      m_commitTable->setItem(row, 3, authorItem);
+      m_commitTable->setItem(row, 4, authorItem);
 
       auto *branchItem = new QTableWidgetItem(branchName);
       branchItem->setToolTip(tip);
       if (bgBrush != QBrush())
         branchItem->setBackground(bgBrush);
-      m_commitTable->setItem(row, 4, branchItem);
+      m_commitTable->setItem(row, 5, branchItem);
 
       auto *shaItem = new QTableWidgetItem(shortSha);
       shaItem->setData(Qt::UserRole, fullSha);
       shaItem->setToolTip(tip);
+      QFont shaFont;
+      shaFont.setStyleHint(QFont::Monospace);
+      shaFont.setFamily(QStringLiteral("Monospace"));
+      shaItem->setFont(shaFont);
       if (bgBrush != QBrush())
         shaItem->setBackground(bgBrush);
-      m_commitTable->setItem(row, 5, shaItem);
+      m_commitTable->setItem(row, 6, shaItem);
     }
   }
   m_commitTable->resizeColumnsToContents();
@@ -1561,10 +1627,10 @@ void MainWindow::onBranchClicked(QTreeWidgetItem *item, int column) {
     return;
 
   for (int row = 0; row < m_commitTable->rowCount(); ++row) {
-    QTableWidgetItem *shaItem = m_commitTable->item(row, 5);
+    QTableWidgetItem *shaItem = m_commitTable->item(row, 6);
     if (shaItem && shaItem->data(Qt::UserRole).toString() == sha) {
       m_commitTable->selectRow(row);
-      QTableWidgetItem *msgItem = m_commitTable->item(row, 2);
+      QTableWidgetItem *msgItem = m_commitTable->item(row, 3);
       if (msgItem) {
         m_commitTable->setCurrentItem(msgItem);
         m_commitTable->scrollToItem(msgItem, QAbstractItemView::EnsureVisible);
@@ -1667,10 +1733,10 @@ void MainWindow::onTagClicked(QTreeWidgetItem *item, int column) {
   }
 
   for (int row = 0; row < m_commitTable->rowCount(); ++row) {
-    QTableWidgetItem *shaItem = m_commitTable->item(row, 5);
+    QTableWidgetItem *shaItem = m_commitTable->item(row, 6);
     if (shaItem && shaItem->data(Qt::UserRole).toString() == sha) {
       m_commitTable->selectRow(row);
-      QTableWidgetItem *msgItem = m_commitTable->item(row, 2);
+      QTableWidgetItem *msgItem = m_commitTable->item(row, 3);
       if (msgItem) {
         m_commitTable->setCurrentItem(msgItem);
         m_commitTable->scrollToItem(msgItem, QAbstractItemView::EnsureVisible);
@@ -1877,7 +1943,7 @@ void MainWindow::updateFilter() {
   for (int row = 0; row < m_commitTable->rowCount(); ++row) {
     bool match = empty;
     if (!empty) {
-      for (int col : {1, 2, 3}) {
+      for (int col : {1, 2, 3, 4}) {
         QTableWidgetItem *item = m_commitTable->item(row, col);
         if (item && item->text().contains(text, Qt::CaseInsensitive)) {
           match = true;
@@ -1938,6 +2004,64 @@ QString MainWindow::itemPath(QTreeWidget *tree, QTreeWidgetItem *item) const {
     current = current->parent();
   }
   return parts.join('/');
+}
+
+QString MainWindow::emptyStateHtml(const QString &title,
+                                   const QString &message) const {
+  return QStringLiteral(
+             "<html>"
+             "<body style=\"background-color:#1e1e1e; color:#aaaaaa;\">"
+             "<div style=\"padding:20px; text-align:center;\">"
+             "<h3 style=\"margin:0 0 10px 0;\">%1</h3>"
+             "<p style=\"margin:0;\">%2</p>"
+             "</div>"
+             "</body>"
+             "</html>")
+      .arg(title.toHtmlEscaped(), message.toHtmlEscaped());
+}
+
+QString MainWindow::errorStateHtml(const QString &message) const {
+  return QStringLiteral(
+             "<html>"
+             "<body style=\"background-color:#1e1e1e; color:#ff6b6b;\">"
+             "<div style=\"padding:20px; text-align:center;\">"
+             "<h3 style=\"margin:0 0 10px 0;\">%1</h3>"
+             "<p style=\"margin:0;\">%2</p>"
+             "</div>"
+             "</body>"
+             "</html>")
+      .arg(tr("Error").toHtmlEscaped(), message.toHtmlEscaped());
+}
+
+void MainWindow::showEmptyDiff() {
+  if (m_diffView)
+    m_diffView->setHtml(emptyStateHtml(
+        tr("No diff"), tr("Select a file or commit to view the diff.")));
+}
+
+void MainWindow::showErrorDiff(const QString &message) {
+  if (m_diffView)
+    m_diffView->setHtml(errorStateHtml(message));
+}
+
+void MainWindow::showEmptyCommitFiles() {
+  if (!m_commitFilesTree)
+    return;
+  m_commitFilesTree->clear();
+  auto *placeholder = new QTreeWidgetItem(
+      m_commitFilesTree,
+      QStringList{tr("No commit selected — select a commit to view files")});
+  placeholder->setToolTip(0, tr("Choose a commit from the table above"));
+  placeholder->setFlags(Qt::NoItemFlags);
+}
+
+void MainWindow::showErrorCommitFiles(const QString &message) {
+  if (!m_commitFilesTree)
+    return;
+  m_commitFilesTree->clear();
+  auto *placeholder =
+      new QTreeWidgetItem(m_commitFilesTree, QStringList{message});
+  placeholder->setFlags(Qt::NoItemFlags);
 }
 
 QString MainWindow::formatDiff(const QStringList &lines) const {
@@ -2054,6 +2178,10 @@ void MainWindow::showUnstagedContextMenu(const QPoint &pos) {
   QMenu menu(this);
   QAction *stageAction =
       menu.addAction(isFolder ? tr("Stage folder") : tr("Stage file"));
+  stageAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_S));
+  if (!isFolder)
+    stageAction->setIcon(
+        QApplication::style()->standardIcon(QStyle::SP_ArrowRight));
   QAction *stashAction =
       menu.addAction(isFolder ? tr("Stash folder") : tr("Stash file"));
   QAction *discardAction =
@@ -2079,6 +2207,8 @@ void MainWindow::showUnstagedContextMenu(const QPoint &pos) {
   }
 
   QAction *selected = menu.exec(m_unstagedTree->mapToGlobal(pos));
+  if (!selected)
+    return;
   if (selected == stageAction) {
     if (execGit(m_currentPath, {"add", path})) {
       loadWorkingTree();
@@ -2100,7 +2230,7 @@ void MainWindow::showUnstagedContextMenu(const QPoint &pos) {
     if (ok) {
       loadWorkingTree();
       if (m_diffView)
-        m_diffView->clear();
+        showEmptyDiff();
     }
   } else if (selected == ignoreAction) {
     const QString pattern = isFolder ? path + '/' : path;
@@ -2223,6 +2353,10 @@ void MainWindow::showStagedContextMenu(const QPoint &pos) {
   const QString path = itemPath(m_stagedTree, item);
   QAction *unstageAction =
       menu.addAction(isFolder ? tr("Unstage folder") : tr("Unstage file"));
+  unstageAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_U));
+  if (!isFolder)
+    unstageAction->setIcon(
+        QApplication::style()->standardIcon(QStyle::SP_ArrowLeft));
   QAction *unstageHunksAction = nullptr;
   if (!isFolder) {
     unstageHunksAction = menu.addAction(tr("Unstage hunks"));
@@ -2236,6 +2370,8 @@ void MainWindow::showStagedContextMenu(const QPoint &pos) {
     externalDiffAction = menu.addAction(tr("Open in external diff tool"));
   }
   QAction *selected = menu.exec(m_stagedTree->mapToGlobal(pos));
+  if (!selected)
+    return;
   if (selected == unstageAction) {
     if (execGit(m_currentPath, {"reset", "HEAD", "--", path})) {
       loadWorkingTree();
@@ -2256,7 +2392,7 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
     return;
 
   const int row = item->row();
-  QTableWidgetItem *shaItem = m_commitTable->item(row, 5);
+  QTableWidgetItem *shaItem = m_commitTable->item(row, 6);
   if (!shaItem)
     return;
   const QString sha = shaItem->data(Qt::UserRole).toString();
@@ -2429,13 +2565,13 @@ void MainWindow::diffWithCommit(const QString &fromSha) {
   QStringList items;
   QStringList shas;
   for (int row = 0; row < m_commitTable->rowCount(); ++row) {
-    QTableWidgetItem *shaItem = m_commitTable->item(row, 5);
+    QTableWidgetItem *shaItem = m_commitTable->item(row, 6);
     if (!shaItem)
       continue;
     const QString sha = shaItem->data(Qt::UserRole).toString();
     if (sha.isEmpty() || sha == fromSha)
       continue;
-    QTableWidgetItem *msgItem = m_commitTable->item(row, 2);
+    QTableWidgetItem *msgItem = m_commitTable->item(row, 3);
     const QString msg = msgItem ? msgItem->text() : QString();
     items.append(QStringLiteral("%1 - %2").arg(sha.left(7), msg));
     shas.append(sha);
@@ -2458,7 +2594,11 @@ void MainWindow::diffWithCommit(const QString &fromSha) {
 
   const QString toSha = shas.at(index);
   const QStringList diff = runGit(m_currentPath, {"diff", fromSha, toSha});
-  m_diffView->setHtml(diff.isEmpty() ? tr("No diff") : formatDiff(diff));
+  m_diffView->setHtml(
+      diff.isEmpty()
+          ? emptyStateHtml(tr("No diff"),
+                           tr("No changes to show for this selection."))
+          : formatDiff(diff));
   statusBar()->showMessage(
       tr("Diff between %1 and %2").arg(fromSha.left(7), toSha.left(7)));
 }
@@ -2578,15 +2718,17 @@ void MainWindow::onCommitSelected(QTableWidgetItem *item) {
     return;
 
   if (m_diffView)
-    m_diffView->clear();
+    showEmptyDiff();
 
   m_commitFilesTree->clear();
   m_selectedCommitSha.clear();
 
   const int row = item->row();
-  QTableWidgetItem *shaItem = m_commitTable->item(row, 5);
-  if (!shaItem)
+  QTableWidgetItem *shaItem = m_commitTable->item(row, 6);
+  if (!shaItem) {
+    showEmptyCommitFiles();
     return;
+  }
 
   m_selectedCommitSha = shaItem->data(Qt::UserRole).toString();
 
@@ -2603,8 +2745,11 @@ void MainWindow::onCommitSelected(QTableWidgetItem *item) {
     addFileToTree(m_commitFilesTree, filePath, status);
   }
 
-  if (m_commitFilesTree->topLevelItemCount() > 0)
+  if (m_commitFilesTree->topLevelItemCount() > 0) {
     m_commitFilesTree->collapseAll();
+  } else {
+    showErrorCommitFiles(tr("This commit has no file changes."));
+  }
 }
 
 void MainWindow::onCommitFileClicked(QTreeWidgetItem *item, int column) {
@@ -2621,7 +2766,11 @@ void MainWindow::onCommitFileClicked(QTreeWidgetItem *item, int column) {
       runGit(m_currentPath, {"show", "--pretty=format:", "--no-notes",
                              m_selectedCommitSha, "--", path});
   if (m_diffView) {
-    m_diffView->setHtml(diff.isEmpty() ? tr("No diff") : formatDiff(diff));
+    m_diffView->setHtml(
+        diff.isEmpty()
+            ? emptyStateHtml(tr("No diff"),
+                             tr("No changes to show for this selection."))
+            : formatDiff(diff));
   }
 }
 
@@ -2744,14 +2893,21 @@ void MainWindow::onStashClicked(QTreeWidgetItem *item, int column) {
         continue;
       addFileToTree(m_commitFilesTree, parts.last(), parts.first().left(1));
     }
-    if (m_commitFilesTree->topLevelItemCount() > 0)
+    if (m_commitFilesTree->topLevelItemCount() > 0) {
       m_commitFilesTree->collapseAll();
+    } else {
+      showErrorCommitFiles(tr("This stash has no file changes."));
+    }
   }
 
   const QStringList diff =
       runGit(m_currentPath, {"show", "--pretty=format:", "--no-notes", ref});
   if (m_diffView) {
-    m_diffView->setHtml(diff.isEmpty() ? tr("No diff") : formatDiff(diff));
+    m_diffView->setHtml(
+        diff.isEmpty()
+            ? emptyStateHtml(tr("No diff"),
+                             tr("No changes to show for this selection."))
+            : formatDiff(diff));
   }
 }
 
@@ -2777,14 +2933,22 @@ void MainWindow::onFileClicked(QTreeWidgetItem *item, int column) {
       const QStringList diff =
           runGit(m_currentPath, {"diff", "--cached", "--", path});
       if (m_diffView) {
-        m_diffView->setHtml(diff.isEmpty() ? tr("No diff") : formatDiff(diff));
+        m_diffView->setHtml(
+            diff.isEmpty()
+                ? emptyStateHtml(tr("No diff"),
+                                 tr("No changes to show for this selection."))
+                : formatDiff(diff));
       }
     } else {
       const QStringList diff = runGit(
           m_currentPath,
           {"diff", "--no-index", "--", QStringLiteral("/dev/null"), path}, 1);
       if (m_diffView) {
-        m_diffView->setHtml(diff.isEmpty() ? tr("No diff") : formatDiff(diff));
+        m_diffView->setHtml(
+            diff.isEmpty()
+                ? emptyStateHtml(tr("No diff"),
+                                 tr("No changes to show for this selection."))
+                : formatDiff(diff));
       }
     }
     return;
@@ -2794,7 +2958,11 @@ void MainWindow::onFileClicked(QTreeWidgetItem *item, int column) {
       runGit(m_currentPath, staged ? QStringList{"diff", "--cached", "--", path}
                                    : QStringList{"diff", "--", path});
   if (m_diffView) {
-    m_diffView->setHtml(diff.isEmpty() ? tr("No diff") : formatDiff(diff));
+    m_diffView->setHtml(
+        diff.isEmpty()
+            ? emptyStateHtml(tr("No diff"),
+                             tr("No changes to show for this selection."))
+            : formatDiff(diff));
   }
 }
 

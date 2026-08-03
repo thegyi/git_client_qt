@@ -81,6 +81,12 @@ private:
   QIcon statusIcon(const QString &status) const;
   QString itemPath(QTreeWidget *tree, QTreeWidgetItem *item) const;
   QString formatDiff(const QStringList &lines) const;
+  QString emptyStateHtml(const QString &title, const QString &message) const;
+  QString errorStateHtml(const QString &message) const;
+  void showEmptyDiff();
+  void showErrorDiff(const QString &message);
+  void showEmptyCommitFiles();
+  void showErrorCommitFiles(const QString &message);
   QStringList runGit(const QString &path, const QStringList &args,
                      int acceptedExitCode = 0) const;
   bool execGit(const QString &path, const QStringList &args,
