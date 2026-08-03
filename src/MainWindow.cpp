@@ -342,7 +342,7 @@ MainWindow::MainWindow(QWidget *parent)
               {"config", QStringLiteral("branch.%1.remote").arg(currentBranch)})
               .value(0);
       if (!remote.isEmpty() && !currentBranch.isEmpty())
-        execGit(m_currentPath, {"fetch", remote, currentBranch});
+        execGit(m_currentPath, {"fetch", remote});
       loadRepository(m_currentPath);
       statusBar()->showMessage(m_pushButton->text());
     } else {
@@ -410,7 +410,7 @@ MainWindow::MainWindow(QWidget *parent)
         }
         pullArgs << remotes.first() << currentBranch;
       } else {
-        pullArgs << remote << merge;
+        pullArgs << remote;
       }
     }
 
@@ -476,9 +476,9 @@ MainWindow::MainWindow(QWidget *parent)
   m_commitTable->setShowGrid(true);
   m_commitTable->setStyleSheet(
       QStringLiteral("QTableView { gridline-color: #555555; }"));
-  m_commitTable->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  m_commitTable->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
   m_commitTable->setAlternatingRowColors(true);
-  m_commitTable->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+  m_commitTable->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
   connect(m_commitTable, &QTableWidget::cellClicked, this,
           [this](int row, int column) {
             Q_UNUSED(column)
@@ -1381,7 +1381,6 @@ void MainWindow::loadRepository(const QString &path) {
       m_commitTable->horizontalHeader()->length() +
       QApplication::style()->pixelMetric(QStyle::PM_ScrollBarExtent) +
       2 * m_commitTable->frameWidth();
-  m_commitTable->setFixedWidth(tableWidth);
   if (isInitialLoad) {
     const int leftWidth = qBound(
         80, m_repoPanel ? m_repoPanel->sizeHint().width() + 20 : 180, 200);
@@ -3910,8 +3909,9 @@ void MainWindow::showReflog() {
       {tr("SHA"), tr("Ref"), tr("Message"), tr("Action")});
   table->horizontalHeader()->setSectionResizeMode(
       QHeaderView::ResizeToContents);
+  table->horizontalHeader()->setStretchLastSection(false);
   table->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-  table->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
+  table->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
   table->setMinimumSize(100, 100);
   table->verticalHeader()->setVisible(false);
 
@@ -3980,6 +3980,6 @@ void MainWindow::showReflog() {
   layout->addWidget(buttons);
   connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
 
-  dlg.resize(900, 500);
+  dlg.setFixedSize(900, 500);
   dlg.exec();
 }
