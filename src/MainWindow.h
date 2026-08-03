@@ -65,6 +65,15 @@ private slots:
   void openSubmodule();
   void showReflog();
   void showConflictResolver(const QString &operation);
+  void startBisect();
+  void bisectGood();
+  void bisectBad();
+  void bisectSkip();
+  void bisectReset();
+  void lfsTrack();
+  void lfsUntrack();
+  void lfsPull();
+  void lfsPush();
 
 private:
   void loadRepository(const QString &path);
@@ -85,6 +94,8 @@ private:
   QIcon statusIcon(const QString &status) const;
   QString itemPath(QTreeWidget *tree, QTreeWidgetItem *item) const;
   QString formatDiff(const QStringList &lines) const;
+  bool diffIsLfsPointer(const QStringList &lines) const;
+  QString lfsPointerHtml(const QStringList &lines) const;
   QString emptyStateHtml(const QString &title, const QString &message) const;
   QString errorStateHtml(const QString &message) const;
   void showEmptyDiff();
@@ -98,6 +109,9 @@ private:
   void launchGitTool(const QStringList &args, bool reload = false);
   void loadStashes();
   void showStashDiff(const QString &ref);
+  void loadWorktrees();
+  void showWorktreeContextMenu(const QPoint &pos);
+  void onWorktreeClicked(QTreeWidgetItem *item, int column);
   void loadRemotes();
   void updateCommitButton();
   void updateFilter();
@@ -114,6 +128,7 @@ private:
   QTreeWidgetItem *m_tagsItem = nullptr;
   QTreeWidgetItem *m_remotesItem = nullptr;
   QTreeWidgetItem *m_stashesItem = nullptr;
+  QTreeWidgetItem *m_worktreesItem = nullptr;
   QTreeWidgetItem *m_submodulesItem = nullptr;
   QString m_currentPath;
   QString m_selectedCommitSha;

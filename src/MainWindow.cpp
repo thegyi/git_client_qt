@@ -136,6 +136,30 @@ MainWindow::MainWindow(QWidget *parent)
   connect(resolveConflictsAction, &QAction::triggered, this,
           [this]() { showConflictResolver(QString()); });
 
+  auto *bisectMenu = repositoryMenu->addMenu(tr("Bisect"));
+  auto *bisectStartAction = bisectMenu->addAction(tr("Start..."));
+  auto *bisectGoodAction = bisectMenu->addAction(tr("Good"));
+  auto *bisectBadAction = bisectMenu->addAction(tr("Bad"));
+  auto *bisectSkipAction = bisectMenu->addAction(tr("Skip"));
+  auto *bisectResetAction = bisectMenu->addAction(tr("Reset"));
+  connect(bisectStartAction, &QAction::triggered, this,
+          &MainWindow::startBisect);
+  connect(bisectGoodAction, &QAction::triggered, this, &MainWindow::bisectGood);
+  connect(bisectBadAction, &QAction::triggered, this, &MainWindow::bisectBad);
+  connect(bisectSkipAction, &QAction::triggered, this, &MainWindow::bisectSkip);
+  connect(bisectResetAction, &QAction::triggered, this,
+          &MainWindow::bisectReset);
+
+  auto *lfsMenu = repositoryMenu->addMenu(tr("LFS"));
+  auto *lfsTrackAction = lfsMenu->addAction(tr("Track pattern..."));
+  auto *lfsUntrackAction = lfsMenu->addAction(tr("Untrack pattern..."));
+  auto *lfsPullAction = lfsMenu->addAction(tr("Pull objects"));
+  auto *lfsPushAction = lfsMenu->addAction(tr("Push objects"));
+  connect(lfsTrackAction, &QAction::triggered, this, &MainWindow::lfsTrack);
+  connect(lfsUntrackAction, &QAction::triggered, this, &MainWindow::lfsUntrack);
+  connect(lfsPullAction, &QAction::triggered, this, &MainWindow::lfsPull);
+  connect(lfsPushAction, &QAction::triggered, this, &MainWindow::lfsPush);
+
   ui->actionOpen->setShortcut(QKeySequence::Open);
   ui->actionOpen->setStatusTip(tr("Open an existing Git repository"));
   ui->actionClose->setShortcut(QKeySequence::Close);
@@ -513,6 +537,10 @@ MainWindow::MainWindow(QWidget *parent)
                    (item == m_submodulesItem ||
                     item->parent() == m_submodulesItem)) {
           showSubmodulesContextMenu(pos);
+        } else if (item && m_worktreesItem &&
+                   (item == m_worktreesItem ||
+                    item->parent() == m_worktreesItem)) {
+          showWorktreeContextMenu(pos);
         } else {
           showBranchContextMenu(pos);
         }
@@ -521,6 +549,8 @@ MainWindow::MainWindow(QWidget *parent)
           &MainWindow::onTagClicked);
   connect(m_repoPanel, &QTreeWidget::itemClicked, this,
           &MainWindow::onStashClicked);
+  connect(m_repoPanel, &QTreeWidget::itemClicked, this,
+          &MainWindow::onWorktreeClicked);
   connect(m_repoPanel, &QTreeWidget::itemClicked, this,
           &MainWindow::onBranchClicked);
 
@@ -701,6 +731,7 @@ MainWindow::MainWindow(QWidget *parent)
     m_remoteBranchesItem = nullptr;
     m_tagsItem = nullptr;
     m_stashesItem = nullptr;
+    m_worktreesItem = nullptr;
     m_submodulesItem = nullptr;
     m_localHeadSha.clear();
     m_remoteHeadSha.clear();
@@ -1157,6 +1188,10 @@ void MainWindow::loadRepository(const QString &path) {
   m_stashesItem = new QTreeWidgetItem(m_repoPanel, {tr("Stashes")});
   loadStashes();
   m_stashesItem->setExpanded(true);
+
+  m_worktreesItem = new QTreeWidgetItem(m_repoPanel, {tr("Worktrees")});
+  loadWorktrees();
+  m_worktreesItem->setExpanded(true);
 
   m_commitTable->clear();
   m_commitTable->setRowCount(0);
@@ -2302,6 +2337,37 @@ QString MainWindow::formatDiff(const QStringList &lines) const {
   return html;
 }
 
+bool MainWindow::diffIsLfsPointer(const QStringList &lines) const {
+  for (const QString &line : lines) {
+    const QString trimmed = line.trimmed();
+    if (trimmed.startsWith(
+            QStringLiteral("version https://git-lfs.github.com/spec/v1")))
+      return true;
+  }
+  return false;
+}
+
+QString MainWindow::lfsPointerHtml(const QStringList &lines) const {
+  QString oid;
+  QString size;
+  for (const QString &raw : lines) {
+    const QString line = raw.trimmed();
+    if (line.startsWith(QStringLiteral("oid ")))
+      oid = line.mid(4).trimmed();
+    else if (line.startsWith(QStringLiteral("size ")))
+      size = line.mid(5).trimmed();
+  }
+  return QStringLiteral(
+             "<html>"
+             "<body style=\"background-color:#1e1e1e; color:#cccccc; "
+             "font-family:sans-serif; padding:16px;\">"
+             "<h2>Git LFS pointer</h2>"
+             "<p><b>OID:</b> %1</p>"
+             "<p><b>Size:</b> %2 bytes</p>"
+             "</body></html>")
+      .arg(oid.toHtmlEscaped(), size.toHtmlEscaped());
+}
+
 void MainWindow::showUnstagedContextMenu(const QPoint &pos) {
   QTreeWidgetItem *item = m_unstagedTree->itemAt(pos);
   if (!item || m_currentPath.isEmpty()) {
@@ -2925,11 +2991,15 @@ void MainWindow::onCommitFileClicked(QTreeWidgetItem *item, int column) {
       runGit(m_currentPath, {"show", "--pretty=format:", "--no-notes",
                              m_selectedCommitSha, "--", path});
   if (m_diffView) {
-    m_diffView->setHtml(
-        diff.isEmpty()
-            ? emptyStateHtml(tr("No diff"),
-                             tr("No changes to show for this selection."))
-            : formatDiff(diff));
+    QString html;
+    if (diff.isEmpty())
+      html = emptyStateHtml(tr("No diff"),
+                            tr("No changes to show for this selection."));
+    else if (diffIsLfsPointer(diff))
+      html = lfsPointerHtml(diff);
+    else
+      html = formatDiff(diff);
+    m_diffView->setHtml(html);
   }
 }
 
@@ -3037,6 +3107,120 @@ void MainWindow::showStashDiff(const QString &ref) {
   dlg.exec();
 }
 
+void MainWindow::loadWorktrees() {
+  if (!m_worktreesItem || m_currentPath.isEmpty())
+    return;
+  while (m_worktreesItem->childCount() > 0)
+    delete m_worktreesItem->takeChild(0);
+
+  for (const QString &line : runGit(m_currentPath, {"worktree", "list"})) {
+    const QString path = line.section(' ', 0, 0).trimmed();
+    if (path.isEmpty())
+      continue;
+    auto *item = new QTreeWidgetItem(m_worktreesItem, {path});
+    item->setData(0, Qt::UserRole, path);
+    item->setToolTip(0, line);
+  }
+}
+
+void MainWindow::onWorktreeClicked(QTreeWidgetItem *item, int column) {
+  Q_UNUSED(column)
+  if (!item || !m_worktreesItem || item->parent() != m_worktreesItem)
+    return;
+
+  const QString path = item->data(0, Qt::UserRole).toString();
+  if (path.isEmpty())
+    return;
+
+  if (QFileInfo(path).canonicalFilePath() ==
+      QFileInfo(m_currentPath).canonicalFilePath()) {
+    return;
+  }
+
+  loadRepository(path);
+}
+
+void MainWindow::showWorktreeContextMenu(const QPoint &pos) {
+  QTreeWidgetItem *item = m_repoPanel->itemAt(pos);
+  if (!item || !m_worktreesItem)
+    return;
+
+  if (item == m_worktreesItem) {
+    QMenu menu(this);
+    auto *addAction = menu.addAction(tr("Add worktree..."));
+    if (menu.exec(m_repoPanel->viewport()->mapToGlobal(pos)) != addAction)
+      return;
+
+    QDialog dlg(this);
+    dlg.setWindowTitle(tr("Add worktree"));
+    auto *layout = new QFormLayout(&dlg);
+    auto *pathEdit = new QLineEdit(&dlg);
+    auto *branchEdit = new QLineEdit(&dlg);
+    layout->addRow(tr("Path:"), pathEdit);
+    layout->addRow(tr("Branch:"), branchEdit);
+
+    auto *buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    layout->addRow(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+    if (dlg.exec() != QDialog::Accepted)
+      return;
+
+    const QString worktreePath = pathEdit->text().trimmed();
+    const QString branch = branchEdit->text().trimmed();
+    if (worktreePath.isEmpty() || branch.isEmpty())
+      return;
+
+    const QString existingSha =
+        runGit(m_currentPath, {"rev-parse", "--verify", branch}).value(0);
+    QStringList args = {"worktree", "add"};
+    if (existingSha.isEmpty())
+      args << "-b" << branch;
+    args << worktreePath;
+    if (!existingSha.isEmpty())
+      args << branch;
+
+    if (execGit(m_currentPath, args)) {
+      loadWorktrees();
+      statusBar()->showMessage(tr("Worktree added"));
+    } else {
+      statusBar()->showMessage(tr("Failed to add worktree"));
+    }
+    return;
+  }
+
+  if (item->parent() != m_worktreesItem)
+    return;
+
+  const QString path = item->data(0, Qt::UserRole).toString();
+  if (path.isEmpty())
+    return;
+
+  QMenu menu(this);
+  auto *openAction = menu.addAction(tr("Open"));
+  auto *removeAction = menu.addAction(tr("Remove"));
+  QAction *selected = menu.exec(m_repoPanel->viewport()->mapToGlobal(pos));
+
+  if (selected == openAction) {
+    onWorktreeClicked(item, 0);
+  } else if (selected == removeAction) {
+    if (QFileInfo(path).canonicalFilePath() ==
+        QFileInfo(m_currentPath).canonicalFilePath()) {
+      QMessageBox::warning(this, tr("Worktree"),
+                           tr("Cannot remove the currently open worktree."));
+      return;
+    }
+    if (execGit(m_currentPath, {"worktree", "remove", path})) {
+      loadWorktrees();
+      statusBar()->showMessage(tr("Worktree removed"));
+    } else {
+      statusBar()->showMessage(tr("Failed to remove worktree"));
+    }
+  }
+}
+
 void MainWindow::loadStashes() {
   if (!m_stashesItem || m_currentPath.isEmpty())
     return;
@@ -3118,22 +3302,30 @@ void MainWindow::onFileClicked(QTreeWidgetItem *item, int column) {
       const QStringList diff =
           runGit(m_currentPath, {"diff", "--cached", "--", path});
       if (m_diffView) {
-        m_diffView->setHtml(
-            diff.isEmpty()
-                ? emptyStateHtml(tr("No diff"),
-                                 tr("No changes to show for this selection."))
-                : formatDiff(diff));
+        QString html;
+        if (diff.isEmpty())
+          html = emptyStateHtml(tr("No diff"),
+                                tr("No changes to show for this selection."));
+        else if (diffIsLfsPointer(diff))
+          html = lfsPointerHtml(diff);
+        else
+          html = formatDiff(diff);
+        m_diffView->setHtml(html);
       }
     } else {
       const QStringList diff = runGit(
           m_currentPath,
           {"diff", "--no-index", "--", QStringLiteral("/dev/null"), path}, 1);
       if (m_diffView) {
-        m_diffView->setHtml(
-            diff.isEmpty()
-                ? emptyStateHtml(tr("No diff"),
-                                 tr("No changes to show for this selection."))
-                : formatDiff(diff));
+        QString html;
+        if (diff.isEmpty())
+          html = emptyStateHtml(tr("No diff"),
+                                tr("No changes to show for this selection."));
+        else if (diffIsLfsPointer(diff))
+          html = lfsPointerHtml(diff);
+        else
+          html = formatDiff(diff);
+        m_diffView->setHtml(html);
       }
     }
     return;
@@ -3143,11 +3335,15 @@ void MainWindow::onFileClicked(QTreeWidgetItem *item, int column) {
       runGit(m_currentPath, staged ? QStringList{"diff", "--cached", "--", path}
                                    : QStringList{"diff", "--", path});
   if (m_diffView) {
-    m_diffView->setHtml(
-        diff.isEmpty()
-            ? emptyStateHtml(tr("No diff"),
-                             tr("No changes to show for this selection."))
-            : formatDiff(diff));
+    QString html;
+    if (diff.isEmpty())
+      html = emptyStateHtml(tr("No diff"),
+                            tr("No changes to show for this selection."));
+    else if (diffIsLfsPointer(diff))
+      html = lfsPointerHtml(diff);
+    else
+      html = formatDiff(diff);
+    m_diffView->setHtml(html);
   }
 }
 
@@ -3376,6 +3572,9 @@ void MainWindow::showRepositorySettings() {
                            QStringLiteral("false"), QStringLiteral("input")});
   auto *diffToolEdit = new QLineEdit(&dlg);
   auto *mergeToolEdit = new QLineEdit(&dlg);
+  auto *lfsUrlEdit = new QLineEdit(&dlg);
+  auto *lfsLocksverifyBox =
+      new QCheckBox(tr("Verify LFS locks before push"), &dlg);
 
   nameEdit->setText(runGit(m_currentPath, {"config", "user.name"}).value(0));
   emailEdit->setText(runGit(m_currentPath, {"config", "user.email"}).value(0));
@@ -3387,6 +3586,10 @@ void MainWindow::showRepositorySettings() {
       runGit(m_currentPath, {"config", "diff.tool"}).value(0));
   mergeToolEdit->setText(
       runGit(m_currentPath, {"config", "merge.tool"}).value(0));
+  lfsUrlEdit->setText(runGit(m_currentPath, {"config", "lfs.url"}).value(0));
+  const QString locksverify =
+      runGit(m_currentPath, {"config", "--bool", "lfs.locksverify"}).value(0);
+  lfsLocksverifyBox->setChecked(locksverify == QLatin1String("true"));
 
   form->addRow(tr("User name:"), nameEdit);
   form->addRow(tr("User email:"), emailEdit);
@@ -3394,6 +3597,8 @@ void MainWindow::showRepositorySettings() {
   form->addRow(tr("Auto CRLF:"), autocrlfCombo);
   form->addRow(tr("Diff tool:"), diffToolEdit);
   form->addRow(tr("Merge tool:"), mergeToolEdit);
+  form->addRow(tr("LFS URL:"), lfsUrlEdit);
+  form->addRow(tr("LFS locks verify:"), lfsLocksverifyBox);
   layout->addLayout(form);
 
   auto *buttons = new QDialogButtonBox(
@@ -3419,6 +3624,9 @@ void MainWindow::showRepositorySettings() {
   setConfig(QStringLiteral("core.autocrlf"), autocrlfCombo->currentText());
   setConfig(QStringLiteral("diff.tool"), diffToolEdit->text());
   setConfig(QStringLiteral("merge.tool"), mergeToolEdit->text());
+  setConfig(QStringLiteral("lfs.url"), lfsUrlEdit->text().trimmed());
+  setConfig(QStringLiteral("lfs.locksverify"),
+            lfsLocksverifyBox->isChecked() ? "true" : "false");
 
   statusBar()->showMessage(tr("Repository settings saved"));
 }
@@ -3895,6 +4103,150 @@ void MainWindow::revertCommit(const QString &sha) {
   }
 
   showConflictResolver(QStringLiteral("revert"));
+}
+
+void MainWindow::startBisect() {
+  if (m_currentPath.isEmpty())
+    return;
+
+  QDialog dlg(this);
+  dlg.setWindowTitle(tr("Start bisect"));
+  auto *layout = new QFormLayout(&dlg);
+  auto *badEdit = new QLineEdit(&dlg);
+  badEdit->setText(QStringLiteral("HEAD"));
+  auto *goodEdit = new QLineEdit(&dlg);
+  layout->addRow(tr("Bad commit:"), badEdit);
+  layout->addRow(tr("Good commit:"), goodEdit);
+
+  auto *buttons = new QDialogButtonBox(
+      QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+  layout->addRow(buttons);
+  connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+  if (dlg.exec() != QDialog::Accepted)
+    return;
+
+  const QString bad = badEdit->text().trimmed();
+  const QString good = goodEdit->text().trimmed();
+  if (bad.isEmpty() || good.isEmpty()) {
+    QMessageBox::warning(this, tr("Bisect"),
+                         tr("Both bad and good commits are required."));
+    return;
+  }
+
+  if (execGit(m_currentPath, {"bisect", "start", bad, good})) {
+    loadRepository(m_currentPath);
+    statusBar()->showMessage(tr("Bisect started"));
+  }
+}
+
+void MainWindow::bisectGood() {
+  if (m_currentPath.isEmpty())
+    return;
+  if (execGit(m_currentPath, {"bisect", "good"})) {
+    loadRepository(m_currentPath);
+    statusBar()->showMessage(tr("Marked as good"));
+  }
+}
+
+void MainWindow::bisectBad() {
+  if (m_currentPath.isEmpty())
+    return;
+  if (execGit(m_currentPath, {"bisect", "bad"})) {
+    loadRepository(m_currentPath);
+    statusBar()->showMessage(tr("Marked as bad"));
+  }
+}
+
+void MainWindow::bisectSkip() {
+  if (m_currentPath.isEmpty())
+    return;
+  if (execGit(m_currentPath, {"bisect", "skip"})) {
+    loadRepository(m_currentPath);
+    statusBar()->showMessage(tr("Skipped"));
+  }
+}
+
+void MainWindow::bisectReset() {
+  if (m_currentPath.isEmpty())
+    return;
+  if (execGit(m_currentPath, {"bisect", "reset"})) {
+    loadRepository(m_currentPath);
+    statusBar()->showMessage(tr("Bisect reset"));
+  }
+}
+
+void MainWindow::lfsTrack() {
+  if (m_currentPath.isEmpty())
+    return;
+
+  bool ok;
+  const QString pattern = QInputDialog::getText(
+      this, tr("Track pattern"), tr("File pattern to track with LFS:"),
+      QLineEdit::Normal, QStringLiteral("*"), &ok);
+  if (!ok || pattern.isEmpty())
+    return;
+
+  if (execGit(m_currentPath, {"lfs", "track", pattern})) {
+    loadWorkingTree();
+    statusBar()->showMessage(tr("LFS tracking %1").arg(pattern));
+  } else {
+    statusBar()->showMessage(tr("Failed to track %1").arg(pattern));
+  }
+}
+
+void MainWindow::lfsUntrack() {
+  if (m_currentPath.isEmpty())
+    return;
+
+  bool ok;
+  const QString pattern = QInputDialog::getText(
+      this, tr("Untrack pattern"), tr("File pattern to untrack from LFS:"),
+      QLineEdit::Normal, QString(), &ok);
+  if (!ok || pattern.isEmpty())
+    return;
+
+  if (execGit(m_currentPath, {"lfs", "untrack", pattern})) {
+    loadWorkingTree();
+    statusBar()->showMessage(tr("LFS untracking %1").arg(pattern));
+  } else {
+    statusBar()->showMessage(tr("Failed to untrack %1").arg(pattern));
+  }
+}
+
+void MainWindow::lfsPull() {
+  if (m_currentPath.isEmpty())
+    return;
+  if (execGit(m_currentPath, {"lfs", "pull"})) {
+    loadWorkingTree();
+    statusBar()->showMessage(tr("LFS objects pulled"));
+  } else {
+    statusBar()->showMessage(tr("Failed to pull LFS objects"));
+  }
+}
+
+void MainWindow::lfsPush() {
+  if (m_currentPath.isEmpty())
+    return;
+
+  const QString currentBranch =
+      runGit(m_currentPath, {"rev-parse", "--abbrev-ref", "HEAD"}).value(0);
+  const QString remote =
+      runGit(m_currentPath,
+             {"config", QStringLiteral("branch.%1.remote").arg(currentBranch)})
+          .value(0);
+  if (currentBranch.isEmpty() || remote.isEmpty()) {
+    QMessageBox::warning(this, tr("LFS push"),
+                         tr("No upstream configured for the current branch."));
+    return;
+  }
+
+  if (execGit(m_currentPath, {"lfs", "push", remote, currentBranch})) {
+    statusBar()->showMessage(tr("LFS objects pushed"));
+  } else {
+    statusBar()->showMessage(tr("Failed to push LFS objects"));
+  }
 }
 
 void MainWindow::showReflog() {
