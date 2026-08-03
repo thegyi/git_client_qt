@@ -156,13 +156,31 @@ MainWindow::MainWindow(QWidget *parent)
       QApplication::style()->standardIcon(QStyle::SP_ArrowUp));
   m_pushButton->setEnabled(false);
   m_pushButton->setShortcut(QKeySequence(QLatin1String("Ctrl+Shift+P")));
+  m_undoButton = new QPushButton(tr("Undo"), this);
+  m_undoButton->setEnabled(false);
+  m_undoButton->setShortcut(QKeySequence(QLatin1String("Ctrl+Shift+Z")));
   m_pullButton = new QToolButton(this);
   m_pullButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
   m_pullButton->setPopupMode(QToolButton::MenuButtonPopup);
   m_pullButton->setEnabled(false);
   m_pullButton->setShortcut(QKeySequence(QLatin1String("Ctrl+Shift+L")));
   remoteBar->addWidget(m_pushButton);
+  remoteBar->addWidget(m_undoButton);
   remoteBar->addWidget(m_pullButton);
+  connect(m_undoButton, &QPushButton::clicked, this, [this] {
+    if (m_currentPath.isEmpty())
+      return;
+    if (QMessageBox::question(this, tr("Undo last commit"),
+                              tr("Undo the last commit and keep changes "
+                                 "staged?")) == QMessageBox::Yes) {
+      if (execGit(m_currentPath, {"reset", "--soft", "HEAD~1"})) {
+        loadRepository(m_currentPath);
+        statusBar()->showMessage(tr("Undone last commit"));
+      } else {
+        statusBar()->showMessage(tr("Failed to undo last commit"));
+      }
+    }
+  });
 
   m_pullButton->setText(tr("Pull"));
 
@@ -807,6 +825,8 @@ void MainWindow::loadRepository(const QString &path) {
                  tr("Git Client Qt"));
   if (m_pushButton)
     m_pushButton->setEnabled(true);
+  if (m_undoButton)
+    m_undoButton->setEnabled(true);
   if (m_pullButton)
     m_pullButton->setEnabled(true);
   m_repoPanel->clear();

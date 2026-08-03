@@ -124,6 +124,7 @@ private:
   QCheckBox *m_amendCheckBox = nullptr;
   QLabel *m_branchLabel = nullptr;
   QPushButton *m_pushButton = nullptr;
+  QPushButton *m_undoButton = nullptr;
   QToolButton *m_pullButton = nullptr;
   QMenu *m_recentMenu = nullptr;
   QStringList m_pullArgs;
