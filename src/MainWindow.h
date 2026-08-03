@@ -72,6 +72,8 @@ private:
   void restoreSettings();
   void savePullMode();
   void loadWorkingTree();
+  void saveDockAndColumnState();
+  void restoreDockAndColumnState();
   void onGrepRequested();
   void diffWithCommit(const QString &fromSha);
   void onGrepResultActivated(QTreeWidgetItem *item, int column);
@@ -136,6 +138,7 @@ private:
   QMenu *m_recentMenu = nullptr;
   QStringList m_pullArgs;
   QStringList m_pushArgs;
+  bool m_commitTableWidthInitialized = false;
   QLineEdit *m_filterEdit = nullptr;
   QDockWidget *m_repoDock = nullptr;
   QDockWidget *m_workTreeDock = nullptr;

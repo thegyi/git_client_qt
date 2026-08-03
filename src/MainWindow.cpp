@@ -459,7 +459,7 @@ MainWindow::MainWindow(QWidget *parent)
   m_commitTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
   m_commitTable->verticalHeader()->setVisible(false);
   m_commitTable->horizontalHeader()->setSectionResizeMode(
-      QHeaderView::ResizeToContents);
+      QHeaderView::Interactive);
   m_commitTable->setShowGrid(true);
   m_commitTable->setStyleSheet(
       QStringLiteral("QTableView { gridline-color: #555555; }"));
@@ -512,6 +512,7 @@ MainWindow::MainWindow(QWidget *parent)
           &MainWindow::onBranchClicked);
 
   auto *dock = new QDockWidget(QStringLiteral("Repository"), this);
+  dock->setObjectName(QStringLiteral("repoDock"));
   dock->setTitleBarWidget(new QWidget(dock));
   dock->setWidget(m_repoPanel);
   dock->setFeatures(QDockWidget::DockWidgetMovable);
@@ -520,6 +521,7 @@ MainWindow::MainWindow(QWidget *parent)
   m_repoDock = dock;
 
   auto *rightDock = new QDockWidget(tr("Working Tree"), this);
+  rightDock->setObjectName(QStringLiteral("workTreeDock"));
   rightDock->setFeatures(QDockWidget::DockWidgetMovable);
   auto *rightWidget = new QWidget(this);
   rightWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
@@ -608,6 +610,7 @@ MainWindow::MainWindow(QWidget *parent)
   m_workTreeDock = rightDock;
 
   auto *diffDock = new QDockWidget(tr("Diff"), this);
+  diffDock->setObjectName(QStringLiteral("diffDock"));
   m_diffView = new QTextEdit(this);
   m_diffView->setReadOnly(true);
   m_diffView->setMinimumHeight(120);
@@ -617,6 +620,7 @@ MainWindow::MainWindow(QWidget *parent)
   showEmptyDiff();
 
   m_grepDock = new QDockWidget(tr("Grep"), this);
+  m_grepDock->setObjectName(QStringLiteral("grepDock"));
   m_grepDock->setMinimumHeight(200);
   auto *grepWidget = new QWidget(this);
   auto *grepLayout = new QVBoxLayout(grepWidget);
@@ -727,9 +731,14 @@ MainWindow::MainWindow(QWidget *parent)
     if (!m_currentPath.isEmpty())
       loadRepository(m_currentPath);
   });
+
+  restoreDockAndColumnState();
 }
 
-MainWindow::~MainWindow() { delete ui; }
+MainWindow::~MainWindow() {
+  saveDockAndColumnState();
+  delete ui;
+}
 
 void MainWindow::restoreSettings() {
   QSettings settings("GitClientQt", "GitClientQt");
@@ -772,6 +781,60 @@ void MainWindow::savePullMode() {
   else if (m_pullArgs.contains(QLatin1String("--ff-only")))
     mode = QStringLiteral("ffOnly");
   settings.setValue("pullMode", mode);
+}
+
+void MainWindow::saveDockAndColumnState() {
+  QSettings settings("GitClientQt", "GitClientQt");
+  settings.setValue("mainWindow/geometry", saveGeometry());
+  settings.setValue("mainWindow/state", saveState(0));
+
+  if (m_commitTable)
+    settings.setValue("headers/commitTable",
+                      m_commitTable->horizontalHeader()->saveState());
+  if (m_unstagedTree)
+    settings.setValue("headers/unstagedTree",
+                      m_unstagedTree->header()->saveState());
+  if (m_stagedTree)
+    settings.setValue("headers/stagedTree",
+                      m_stagedTree->header()->saveState());
+  if (m_commitFilesTree)
+    settings.setValue("headers/commitFilesTree",
+                      m_commitFilesTree->header()->saveState());
+  if (m_grepResults)
+    settings.setValue("headers/grepResults",
+                      m_grepResults->header()->saveState());
+}
+
+void MainWindow::restoreDockAndColumnState() {
+  QSettings settings("GitClientQt", "GitClientQt");
+  const QByteArray geometry =
+      settings.value("mainWindow/geometry").toByteArray();
+  const QByteArray state = settings.value("mainWindow/state").toByteArray();
+  if (!geometry.isEmpty())
+    restoreGeometry(geometry);
+  if (!state.isEmpty())
+    restoreState(state, 0);
+
+  const QHash<QTreeWidget *, QString> trees = {
+      {m_unstagedTree, QStringLiteral("headers/unstagedTree")},
+      {m_stagedTree, QStringLiteral("headers/stagedTree")},
+      {m_commitFilesTree, QStringLiteral("headers/commitFilesTree")},
+      {m_grepResults, QStringLiteral("headers/grepResults")}};
+  for (auto it = trees.cbegin(); it != trees.cend(); ++it) {
+    QTreeWidget *tree = it.key();
+    if (tree) {
+      const QByteArray headerState = settings.value(it.value()).toByteArray();
+      if (!headerState.isEmpty())
+        tree->header()->restoreState(headerState);
+    }
+  }
+
+  if (m_commitTable) {
+    const QByteArray headerState =
+        settings.value(QStringLiteral("headers/commitTable")).toByteArray();
+    if (!headerState.isEmpty())
+      m_commitTable->horizontalHeader()->restoreState(headerState);
+  }
 }
 
 void MainWindow::showPreferences() {
@@ -1236,7 +1299,10 @@ void MainWindow::loadRepository(const QString &path) {
       m_commitTable->setItem(row, 6, shaItem);
     }
   }
-  m_commitTable->resizeColumnsToContents();
+  if (!m_commitTableWidthInitialized) {
+    m_commitTable->resizeColumnsToContents();
+    m_commitTableWidthInitialized = true;
+  }
   const int tableWidth =
       m_commitTable->horizontalHeader()->length() +
       QApplication::style()->pixelMetric(QStyle::PM_ScrollBarExtent) +
