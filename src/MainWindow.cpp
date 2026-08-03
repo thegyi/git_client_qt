@@ -2273,6 +2273,8 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
       menu.addAction(tr("Interactive rebase from here"));
   auto *cherryPickAction = menu.addAction(tr("Cherry-pick this commit"));
   auto *revertAction = menu.addAction(tr("Revert this commit"));
+  auto *squashAction = menu.addAction(tr("Squash with previous"));
+  auto *fixupAction = menu.addAction(tr("Fixup into previous"));
   auto *resetAction = menu.addAction(tr("Reset to this commit"));
   QAction *selected = menu.exec(m_commitTable->viewport()->mapToGlobal(pos));
 
@@ -2328,6 +2330,45 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
 
   if (selected == revertAction) {
     revertCommit(sha);
+    return;
+  }
+
+  if (selected == squashAction || selected == fixupAction) {
+    const QString base = sha + QLatin1String("~2");
+    if (runGit(m_currentPath, {"rev-parse", base}).isEmpty()) {
+      QMessageBox::warning(
+          this, tr("Cannot rebase"),
+          tr("Selected commit has no previous commit to combine with."));
+      return;
+    }
+    const QString shortSha =
+        runGit(m_currentPath, {"rev-parse", "--short", sha}).value(0);
+    const QString command = (selected == squashAction)
+                                ? QStringLiteral("squash")
+                                : QStringLiteral("fixup");
+    const QString sedCmd =
+        QStringLiteral("sed -i 's/^pick %1 /%2 %1 /'").arg(shortSha, command);
+
+    QProcess p;
+    p.setWorkingDirectory(m_currentPath);
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert(QStringLiteral("GIT_SEQUENCE_EDITOR"), sedCmd);
+    env.insert(QStringLiteral("GIT_EDITOR"), QStringLiteral("true"));
+    p.setProcessEnvironment(env);
+    p.start(QStringLiteral("git"),
+            QStringList{QStringLiteral("-C"), m_currentPath,
+                        QStringLiteral("rebase"), QStringLiteral("-i"), base});
+    p.waitForFinished(-1);
+
+    if (p.exitCode() == 0) {
+      loadRepository(m_currentPath);
+      statusBar()->showMessage(
+          tr("%1d %2 into previous").arg(command, sha.left(7)));
+    } else {
+      QMessageBox::warning(this, tr("Rebase failed"),
+                           QString::fromLocal8Bit(p.readAllStandardError() +
+                                                  p.readAllStandardOutput()));
+    }
     return;
   }
 
