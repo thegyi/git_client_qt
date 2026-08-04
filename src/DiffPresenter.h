@@ -11,7 +11,8 @@ class DiffPresenter : public QObject {
 public:
   explicit DiffPresenter(QObject *parent = nullptr);
 
-  QString formatDiff(const QStringList &lines) const;
+  QString formatDiff(const QStringList &lines, bool includeHunkLinks = false,
+                     bool unstageLink = false) const;
   bool isLfsPointer(const QStringList &lines) const;
   QString lfsPointerHtml(const QStringList &lines) const;
 };

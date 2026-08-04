@@ -5,7 +5,9 @@
 
 DiffPresenter::DiffPresenter(QObject *parent) : QObject(parent) {}
 
-QString DiffPresenter::formatDiff(const QStringList &lines) const {
+QString DiffPresenter::formatDiff(const QStringList &lines,
+                                  bool includeHunkLinks,
+                                  bool unstageLink) const {
   QString html = QStringLiteral(
       "<html>"
       "<body style=\"background-color:#1e1e1e\">"
@@ -13,6 +15,7 @@ QString DiffPresenter::formatDiff(const QStringList &lines) const {
 
   int oldLine = -1;
   int newLine = -1;
+  int hunkIndex = 0;
   QRegularExpression hunkRe(
       QStringLiteral("@@ -(\\d+)(?:,\\d+)? [+](\\d+)(?:,\\d+)? @@"));
 
@@ -23,11 +26,20 @@ QString DiffPresenter::formatDiff(const QStringList &lines) const {
         oldLine = m.captured(1).toInt();
         newLine = m.captured(2).toInt();
       }
-      html +=
-          QStringLiteral("<tr><td colspan=\"2\" "
-                         "style=\"background-color:#3c3c3c; color:#aaaaaa;\">"
-                         "<pre style=\"margin:0\">") +
-          line.toHtmlEscaped() + QStringLiteral("</pre></td></tr>");
+      const QString link =
+          includeHunkLinks
+              ? QStringLiteral("<a href=\"git:hunk:%1\" "
+                               "style=\"color:#4fc3f7; "
+                               "text-decoration:none; "
+                               "float:right; padding-right:6px;\">%2</a>")
+                    .arg(QString::number(hunkIndex++),
+                         unstageLink ? tr("unstage hunk") : tr("stage hunk"))
+              : QString();
+      html += QStringLiteral(
+                  "<tr><td colspan=\"2\" "
+                  "style=\"background-color:#3c3c3c; color:#aaaaaa;\">") +
+              link + QStringLiteral("<pre style=\"margin:0\">") +
+              line.toHtmlEscaped() + QStringLiteral("</pre></td></tr>");
       continue;
     }
 

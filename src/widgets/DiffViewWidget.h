@@ -2,9 +2,9 @@
 #define DIFFVIEWWIDGET_H
 
 #include <QString>
-#include <QTextEdit>
+#include <QTextBrowser>
 
-class DiffViewWidget : public QTextEdit {
+class DiffViewWidget : public QTextBrowser {
   Q_OBJECT
 
 public:

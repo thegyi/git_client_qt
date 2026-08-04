@@ -94,6 +94,7 @@ private:
   void loadRepository(const QString &path);
   bool repositoryStateChanged() const;
   void showHunkStaging(const QString &path, bool unstage);
+  void onDiffAnchorClicked(const QUrl &link);
   void restoreSettings();
   void savePullMode();
   void loadWorkingTree();
@@ -138,6 +139,10 @@ private:
   QTreeWidgetItem *m_worktreesItem = nullptr;
   QTreeWidgetItem *m_submodulesItem = nullptr;
   QString m_currentPath;
+  QString m_currentDiffPath;
+  QStringList m_currentDiffLines;
+  bool m_currentDiffUnstage = false;
+  bool m_currentDiffIsNew = false;
   QString m_selectedCommitSha;
   QString m_localHeadSha;
   QString m_remoteHeadSha;

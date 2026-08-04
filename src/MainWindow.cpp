@@ -754,6 +754,8 @@ MainWindow::MainWindow(QWidget *parent)
   m_diffView->setFont(QFont(QStringLiteral("monospace"), 10));
   m_diffView->setFrameStyle(QFrame::NoFrame);
   m_diffView->document()->setDocumentMargin(0);
+  connect(m_diffView, &QTextBrowser::anchorClicked, this,
+          &MainWindow::onDiffAnchorClicked);
   showEmptyDiff();
 
   m_grepDock = new QDockWidget(tr("Grep"), this);
@@ -3449,12 +3451,83 @@ void MainWindow::onFileClicked(QTreeWidgetItem *item, int column) {
                             tr("No changes to show for this selection."));
       return;
     }
+    m_currentDiffPath = path;
+    m_currentDiffLines = diff;
+    m_currentDiffUnstage = staged;
+    m_currentDiffIsNew = false;
     const QString html = m_diffPresenter->isLfsPointer(diff)
                              ? m_diffPresenter->lfsPointerHtml(diff)
-                             : m_diffPresenter->formatDiff(diff);
+                             : m_diffPresenter->formatDiff(diff, true, staged);
     m_diffDock->setVisible(true);
     m_diffView->setHtml(html);
   }
+}
+
+void MainWindow::onDiffAnchorClicked(const QUrl &url) {
+  const QString urlString = url.toString();
+  if (!urlString.startsWith(QStringLiteral("git:hunk:")))
+    return;
+
+  const int hunkIndex = urlString.mid(9).toInt();
+  if (m_currentPath.isEmpty() || m_currentDiffPath.isEmpty() ||
+      m_currentDiffLines.isEmpty())
+    return;
+
+  const QRegularExpression hunkRe(
+      QStringLiteral("^@@ -(\\d+)(?:,(\\d+))? \\+(\\d+)(?:,(\\d+))? @@"));
+  QList<int> hunkStarts;
+  for (int i = 0; i < m_currentDiffLines.size(); ++i) {
+    if (hunkRe.match(m_currentDiffLines[i]).hasMatch())
+      hunkStarts.append(i);
+  }
+  if (hunkIndex < 0 || hunkIndex >= hunkStarts.size())
+    return;
+
+  const int firstHunk = hunkStarts.first();
+  QStringList headerLines;
+  for (int i = 0; i < firstHunk; ++i)
+    headerLines.append(m_currentDiffLines[i]);
+
+  const int start = hunkStarts[hunkIndex];
+  const int end = (hunkIndex + 1 < hunkStarts.size())
+                      ? hunkStarts[hunkIndex + 1] - 1
+                      : m_currentDiffLines.size() - 1;
+
+  QStringList patchLines = headerLines;
+  for (int i = start; i <= end; ++i)
+    patchLines.append(m_currentDiffLines[i]);
+  const QString patch = patchLines.join(QLatin1Char('\n')) + QLatin1Char('\n');
+
+  QTemporaryFile tempFile;
+  if (!tempFile.open())
+    return;
+  tempFile.write(patch.toUtf8());
+  tempFile.close();
+
+  const QStringList applyArgs =
+      m_currentDiffUnstage
+          ? QStringList{QStringLiteral("apply"), QStringLiteral("--cached"),
+                        QStringLiteral("-R"), tempFile.fileName()}
+          : QStringList{QStringLiteral("apply"), QStringLiteral("--cached"),
+                        tempFile.fileName()};
+  if (!m_gitExecutor->exec(m_currentPath, applyArgs))
+    return;
+
+  loadWorkingTree();
+
+  const QStringList refreshArgs =
+      m_currentDiffUnstage
+          ? QStringList{QStringLiteral("diff"), QStringLiteral("--cached"),
+                        QStringLiteral("--"), m_currentDiffPath}
+          : QStringList{QStringLiteral("diff"), QStringLiteral("--"),
+                        QStringLiteral("--"), m_currentDiffPath};
+  m_currentDiffLines = m_gitExecutor->run(m_currentPath, refreshArgs);
+  if (m_currentDiffLines.isEmpty() || m_diffView == nullptr) {
+    showEmptyDiff();
+    return;
+  }
+  m_diffView->setHtml(m_diffPresenter->formatDiff(m_currentDiffLines, true,
+                                                  m_currentDiffUnstage));
 }
 
 void MainWindow::editGitignore() {
