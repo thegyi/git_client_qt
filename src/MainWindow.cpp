@@ -2845,21 +2845,22 @@ void MainWindow::showBlame(const QString &path, const QString &revision) {
   QDialog dlg(this);
   dlg.setWindowTitle(tr("Blame %1").arg(path));
   auto *layout = new QVBoxLayout(&dlg);
-  auto *view = new QTextEdit(&dlg);
-  view->setReadOnly(true);
-  view->setFont(QFont(QStringLiteral("monospace"), 10));
-  layout->addWidget(view);
+  auto *table = new QTableWidget(&dlg);
+  table->setColumnCount(4);
+  table->setHorizontalHeaderLabels(
+      {tr("SHA"), tr("Summary"), tr("Date"), tr("Source")});
+  table->horizontalHeader()->setVisible(false);
+  table->verticalHeader()->setVisible(false);
+  table->setShowGrid(false);
+  table->setSelectionBehavior(QAbstractItemView::SelectRows);
+  table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+  table->setFont(QFont(QStringLiteral("monospace"), 10));
+  table->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+  layout->addWidget(table);
 
   QString currentSha;
-  QString currentAuthor;
   QString currentSummary;
   qint64 currentTime = 0;
-  int currentLine = 0;
-
-  QString html = QStringLiteral(
-      "<html>"
-      "<body style=\"background-color:#1e1e1e; color:#d4d4d4;\" >"
-      "<table width=\"100%\" cellspacing=\"0\" cellpadding=\"2\">");
 
   const QRegularExpression hunkRe(
       QStringLiteral("^(\\^?[0-9a-fA-F]{40}) (\\d+) (\\d+) (\\d+)$"));
@@ -2868,12 +2869,8 @@ void MainWindow::showBlame(const QString &path, const QString &revision) {
     if (m.hasMatch()) {
       currentSha = m.captured(1);
       currentSha.remove(QLatin1Char('^'));
-      currentLine = m.captured(3).toInt();
-      currentAuthor.clear();
       currentSummary.clear();
       currentTime = 0;
-    } else if (line.startsWith(QStringLiteral("author "))) {
-      currentAuthor = line.mid(7);
     } else if (line.startsWith(QStringLiteral("author-time "))) {
       currentTime = line.mid(12).toLongLong();
     } else if (line.startsWith(QStringLiteral("summary "))) {
@@ -2884,33 +2881,52 @@ void MainWindow::showBlame(const QString &path, const QString &revision) {
                                ? QDateTime::fromSecsSinceEpoch(currentTime)
                                      .toString(QStringLiteral("yyyy-MM-dd"))
                                : QString();
-      html +=
-          QStringLiteral(
-              "<tr>"
-              "<td style=\"white-space:nowrap; background-color:#252526; "
-              "color:#9cdcfe; padding-right:12px;\">%1</td>"
-              "<td style=\"white-space:nowrap; background-color:#252526; "
-              "color:#dcdcaa; padding-right:12px;\">%2</td>"
-              "<td style=\"white-space:nowrap; background-color:#252526; "
-              "color:#808080; padding-right:12px;\">%3</td>"
-              "<td style=\"white-space:nowrap; background-color:#1e1e1e; "
-              "color:#d4d4d4;\"><pre style=\"margin:0; font-family:monospace; "
-              "white-space:pre;\">%4</pre></td>"
-              "</tr>")
-              .arg(currentSha.left(7).toHtmlEscaped(),
-                   currentSummary.toHtmlEscaped(), date,
-                   content.toHtmlEscaped());
-      ++currentLine;
+
+      const int row = table->rowCount();
+      table->insertRow(row);
+
+      auto *shaItem = new QTableWidgetItem(currentSha.left(7));
+      shaItem->setBackground(QColor(0x25, 0x25, 0x26));
+      shaItem->setForeground(QColor(0x9c, 0xdc, 0xfe));
+      shaItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+      table->setItem(row, 0, shaItem);
+
+      auto *summaryItem = new QTableWidgetItem(currentSummary.left(60));
+      summaryItem->setToolTip(currentSummary);
+      summaryItem->setBackground(QColor(0x25, 0x25, 0x26));
+      summaryItem->setForeground(QColor(0xdc, 0xdc, 0xaa));
+      summaryItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+      table->setItem(row, 1, summaryItem);
+
+      auto *dateItem = new QTableWidgetItem(date);
+      dateItem->setBackground(QColor(0x25, 0x25, 0x26));
+      dateItem->setForeground(QColor(0x80, 0x80, 0x80));
+      dateItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+      table->setItem(row, 2, dateItem);
+
+      auto *contentItem = new QTableWidgetItem(content);
+      contentItem->setBackground(QColor(0x1e, 0x1e, 0x1e));
+      contentItem->setForeground(QColor(0xd4, 0xd4, 0xd4));
+      contentItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+      table->setItem(row, 3, contentItem);
     }
   }
-
-  html += QStringLiteral("</table></body></html>");
-  view->setHtml(html);
 
   auto *closeBtn = new QPushButton(tr("Close"), &dlg);
   connect(closeBtn, &QPushButton::clicked, &dlg, &QDialog::accept);
   layout->addWidget(closeBtn);
   dlg.resize(1000, 700);
+
+  table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
+  table->setColumnWidth(0, 70);
+  table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Fixed);
+  table->setColumnWidth(1, 150);
+  table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Fixed);
+  table->setColumnWidth(2, 80);
+  table->horizontalHeader()->setStretchLastSection(true);
+
+  dlg.show();
+  table->resizeRowsToContents();
   dlg.exec();
 }
 
