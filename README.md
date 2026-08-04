@@ -72,11 +72,14 @@ No additional runtime files are required besides the Qt libraries and a working
     source column expands to use the available window width.
 13. The diff dock hides automatically when no diff is selected and reappears
     when you click a file that has changes.
+14. Use the `Filter` toolbar to search commits by message, author, branch, or
+    SHA. Type `file:<pattern>` to filter for commits that touched a matching
+    file or path.
 
 ## Features
 
 - **Repository management**: open, clone, and initialize repositories; reopen recent repositories from the `File` menu.
-- **Commit history**: browse the commit graph with author, date, message and SHA information. Unpushed and unpulled commits are highlighted.
+- **Commit history and search**: browse the commit graph with author, date, message and SHA information; use the `Filter` toolbar to filter by message, author, branch, SHA or touched files (`file:<pattern>`). Unpushed and unpulled commits are highlighted.
 - **Working tree panel**: stage and unstage files, view modified/untracked files, and stash changes from the right dock.
 - **Repository explorer**: inspect branches, tags, stashes and submodules in the left dock.
 - **Diff view**: compare working-tree or committed file changes. The diff dock is hidden automatically when nothing is selected and reappears when a file with changes is clicked.

@@ -117,6 +117,7 @@ private:
   void loadRemotes();
   void updateCommitButton();
   void updateFilter();
+  void updateFileFilter(const QString &text);
   void updateRecentRepos();
   void onCommitSelected(QTableWidgetItem *item);
   void onCommitFileClicked(QTreeWidgetItem *item, int column);

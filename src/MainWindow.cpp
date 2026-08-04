@@ -12,9 +12,11 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
+#include <QByteArray>
 #include <QCheckBox>
 #include <QColorDialog>
 #include <QComboBox>
+#include <QCryptographicHash>
 #include <QDesktopServices>
 #include <QDialogButtonBox>
 #include <QDockWidget>
@@ -989,16 +991,24 @@ void MainWindow::saveDockAndColumnState(bool includeGeometry) {
   if (includeGeometry)
     settings.setValue("mainWindow/geometry", saveGeometry());
 
-  const QString repoKey = m_currentPath.isEmpty()
-                              ? QStringLiteral("default")
-                              : QString::number(qHash(m_currentPath), 16);
+  const QString repoKey =
+      m_currentPath.isEmpty()
+          ? QStringLiteral("default")
+          : QCryptographicHash::hash(m_currentPath.toUtf8(),
+                                     QCryptographicHash::Sha1)
+                .toHex();
   const QString base =
       QLatin1String("dockLayouts/") + repoKey + QLatin1Char('/');
   settings.setValue(base + QLatin1String("state"), saveState(0));
 
-  if (m_commitTable)
-    settings.setValue(base + QLatin1String("headers/commitTable"),
-                      m_commitTable->horizontalHeader()->saveState());
+  if (m_commitTable) {
+    QVariantList widths;
+    for (int c = 0; c < m_commitTable->columnCount(); ++c)
+      widths << m_commitTable->columnWidth(c);
+    qDebug() << "saveDockAndColumnState" << m_currentPath << repoKey
+             << "commitTable widths:" << widths;
+    settings.setValue(base + QLatin1String("columnWidths/commitTable"), widths);
+  }
   if (m_unstagedTree)
     settings.setValue(base + QLatin1String("headers/unstagedTree"),
                       m_unstagedTree->header()->saveState());
@@ -1037,9 +1047,12 @@ void MainWindow::restoreDockAndColumnState(bool includeGeometry) {
     }
   }
 
-  const QString repoKey = m_currentPath.isEmpty()
-                              ? QStringLiteral("default")
-                              : QString::number(qHash(m_currentPath), 16);
+  const QString repoKey =
+      m_currentPath.isEmpty()
+          ? QStringLiteral("default")
+          : QCryptographicHash::hash(m_currentPath.toUtf8(),
+                                     QCryptographicHash::Sha1)
+                .toHex();
   const QString base =
       QLatin1String("dockLayouts/") + repoKey + QLatin1Char('/');
 
@@ -1078,11 +1091,13 @@ void MainWindow::restoreDockAndColumnState(bool includeGeometry) {
   }
 
   if (m_commitTable) {
-    const QByteArray headerState =
-        settings.value(base + QLatin1String("headers/commitTable"))
-            .toByteArray();
-    if (!headerState.isEmpty())
-      m_commitTable->horizontalHeader()->restoreState(headerState);
+    const QVariantList widths =
+        settings.value(base + QLatin1String("columnWidths/commitTable"))
+            .toList();
+    qDebug() << "restoreDockAndColumnState" << m_currentPath << repoKey
+             << "commitTable widths:" << widths;
+    for (int c = 0; c < widths.size() && c < m_commitTable->columnCount(); ++c)
+      m_commitTable->setColumnWidth(c, widths.at(c).toInt());
   }
 }
 
@@ -1414,7 +1429,7 @@ void MainWindow::loadRepository(const QString &path) {
   if (path.isEmpty())
     return;
 
-  if (!m_currentPath.isEmpty())
+  if (!m_currentPath.isEmpty() && m_currentPath != path)
     saveDockAndColumnState(false);
 
   m_gitRepository->setPath(path);
@@ -2361,11 +2376,15 @@ void MainWindow::updateFilter() {
   if (!m_filterEdit || !m_commitTable)
     return;
   const QString text = m_filterEdit->text().trimmed();
+  if (text.startsWith(QStringLiteral("file:"), Qt::CaseInsensitive)) {
+    QTimer::singleShot(200, this, [this, text] { updateFileFilter(text); });
+    return;
+  }
   const bool empty = text.isEmpty();
   for (int row = 0; row < m_commitTable->rowCount(); ++row) {
     bool match = empty;
     if (!empty) {
-      for (int col : {1, 2, 3, 4}) {
+      for (int col = 0; col < m_commitTable->columnCount(); ++col) {
         QTableWidgetItem *item = m_commitTable->item(row, col);
         if (item && item->text().contains(text, Qt::CaseInsensitive)) {
           match = true;
@@ -2374,6 +2393,28 @@ void MainWindow::updateFilter() {
       }
     }
     m_commitTable->setRowHidden(row, !match);
+  }
+}
+
+void MainWindow::updateFileFilter(const QString &text) {
+  if (!m_filterEdit || !m_commitTable)
+    return;
+  if (m_filterEdit->text().trimmed() != text)
+    return;
+
+  const QString pattern = text.mid(5).trimmed();
+  const QStringList shas =
+      m_currentPath.isEmpty()
+          ? QStringList()
+          : m_gitExecutor->run(m_currentPath,
+                               {QStringLiteral("log"), QStringLiteral("--all"),
+                                QStringLiteral("--format=%H"),
+                                QStringLiteral("--"), pattern});
+  const QSet<QString> shaSet = QSet<QString>(shas.cbegin(), shas.cend());
+  for (int row = 0; row < m_commitTable->rowCount(); ++row) {
+    QTableWidgetItem *item = m_commitTable->item(row, 6);
+    const QString sha = item ? item->data(Qt::UserRole).toString() : QString();
+    m_commitTable->setRowHidden(row, !shaSet.contains(sha));
   }
 }
 
