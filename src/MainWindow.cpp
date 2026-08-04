@@ -2296,8 +2296,10 @@ void MainWindow::onCommitClicked() {
 
 void MainWindow::showEmptyDiff() {
   if (m_diffView)
-    m_diffView->showEmpty(tr("No diff"),
-                          tr("Select a file or commit to view the diff."));
+    if (m_diffDock)
+      m_diffDock->setVisible(false);
+  m_diffView->showEmpty(tr("No diff"),
+                        tr("Select a file or commit to view the diff."));
 }
 
 void MainWindow::showErrorDiff(const QString &message) {
@@ -2789,11 +2791,14 @@ void MainWindow::diffWithCommit(const QString &fromSha) {
   const QString toSha = shas.at(index);
   const QStringList diff =
       m_gitExecutor->run(m_currentPath, {"diff", fromSha, toSha});
-  if (diff.isEmpty())
+  if (diff.isEmpty()) {
+    if (m_diffDock)
+      m_diffDock->setVisible(false);
     m_diffView->showEmpty(tr("No diff"),
                           tr("No changes to show for this selection."));
-  else
+  } else {
     m_diffDock->setVisible(true);
+  }
   m_diffView->setHtml(m_diffPresenter->formatDiff(diff));
   statusBar()->showMessage(
       tr("Diff between %1 and %2").arg(fromSha.left(7), toSha.left(7)));
@@ -2963,6 +2968,8 @@ void MainWindow::onCommitFileClicked(QTreeWidgetItem *item, int column) {
                       m_selectedCommitSha, "--", path});
   if (m_diffView) {
     if (diff.isEmpty()) {
+      if (m_diffDock)
+        m_diffDock->setVisible(false);
       m_diffView->showEmpty(tr("No diff"),
                             tr("No changes to show for this selection."));
       return;
@@ -3232,11 +3239,14 @@ void MainWindow::onStashClicked(QTreeWidgetItem *item, int column) {
   const QStringList diff = m_gitExecutor->run(
       m_currentPath, {"show", "--pretty=format:", "--no-notes", ref});
   if (m_diffView) {
-    if (diff.isEmpty())
+    if (diff.isEmpty()) {
+      if (m_diffDock)
+        m_diffDock->setVisible(false);
       m_diffView->showEmpty(tr("No diff"),
                             tr("No changes to show for this selection."));
-    else
+    } else {
       m_diffDock->setVisible(true);
+    }
     m_diffView->setHtml(m_diffPresenter->formatDiff(diff));
   }
 }
@@ -3264,6 +3274,8 @@ void MainWindow::onFileClicked(QTreeWidgetItem *item, int column) {
           m_gitExecutor->run(m_currentPath, {"diff", "--cached", "--", path});
       if (m_diffView) {
         if (diff.isEmpty()) {
+          if (m_diffDock)
+            m_diffDock->setVisible(false);
           m_diffView->showEmpty(tr("No diff"),
                                 tr("No changes to show for this selection."));
           return;
@@ -3280,6 +3292,8 @@ void MainWindow::onFileClicked(QTreeWidgetItem *item, int column) {
           {"diff", "--no-index", "--", QStringLiteral("/dev/null"), path}, 1);
       if (m_diffView) {
         if (diff.isEmpty()) {
+          if (m_diffDock)
+            m_diffDock->setVisible(false);
           m_diffView->showEmpty(tr("No diff"),
                                 tr("No changes to show for this selection."));
           return;
@@ -3299,6 +3313,8 @@ void MainWindow::onFileClicked(QTreeWidgetItem *item, int column) {
                             : QStringList{"diff", "--", path});
   if (m_diffView) {
     if (diff.isEmpty()) {
+      if (m_diffDock)
+        m_diffDock->setVisible(false);
       m_diffView->showEmpty(tr("No diff"),
                             tr("No changes to show for this selection."));
       return;
