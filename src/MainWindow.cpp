@@ -1787,6 +1787,12 @@ void MainWindow::loadRepository(const QString &path) {
       else if (m_unpulledShas.contains(c.fullSha))
         bgBrush = QBrush(QColor(255, 240, 225));
 
+      if (r < 3)
+        qDebug() << "commit row" << r << c.shortSha << "unpushed?"
+                 << m_unpushedShas.contains(c.fullSha) << "unpulled?"
+                 << m_unpulledShas.contains(c.fullSha) << "bg set?"
+                 << (bgBrush != QBrush());
+
       const int row = m_commitTable->rowCount();
       m_commitTable->insertRow(row);
 
