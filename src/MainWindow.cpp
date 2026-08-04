@@ -127,6 +127,8 @@ MainWindow::MainWindow(QWidget *parent)
       tr("Initialize the configured submodules"));
   auto *updateSubmodulesAction = submodulesMenu->addAction(tr("Update"));
   updateSubmodulesAction->setStatusTip(tr("Update registered submodules"));
+  auto *syncSubmodulesAction = submodulesMenu->addAction(tr("Sync"));
+  syncSubmodulesAction->setStatusTip(tr("Sync submodule remotes"));
   auto *addSubmoduleAction = submodulesMenu->addAction(tr("Add..."));
   addSubmoduleAction->setStatusTip(tr("Add a new submodule to the repository"));
   auto *openSubmoduleAction = submodulesMenu->addAction(tr("Open..."));
@@ -135,6 +137,8 @@ MainWindow::MainWindow(QWidget *parent)
           &MainWindow::initSubmodules);
   connect(updateSubmodulesAction, &QAction::triggered, this,
           &MainWindow::updateSubmodules);
+  connect(syncSubmodulesAction, &QAction::triggered, this,
+          &MainWindow::syncSubmodules);
   connect(addSubmoduleAction, &QAction::triggered, this,
           &MainWindow::addSubmodule);
   connect(openSubmoduleAction, &QAction::triggered, this,
@@ -3905,19 +3909,28 @@ void MainWindow::showSubmodulesContextMenu(const QPoint &pos) {
   QAction *selected = nullptr;
 
   if (item == m_submodulesItem) {
-    auto *initAllAction = menu.addAction(tr("&Init all"));
-    auto *updateAllAction = menu.addAction(tr("&Update all"));
     auto *addAction = menu.addAction(tr("&Add..."));
-    selected = menu.exec(m_repoPanel->viewport()->mapToGlobal(pos));
-    if (!selected)
-      return;
+    if (m_submodulesItem->childCount() > 0) {
+      auto *initAllAction = menu.addAction(tr("&Init all"));
+      auto *updateAllAction = menu.addAction(tr("&Update all"));
+      auto *syncAllAction = menu.addAction(tr("&Sync all"));
+      selected = menu.exec(m_repoPanel->viewport()->mapToGlobal(pos));
+      if (!selected)
+        return;
 
-    if (selected == initAllAction) {
-      initSubmodules();
-    } else if (selected == updateAllAction) {
-      updateSubmodules();
-    } else if (selected == addAction) {
-      addSubmodule();
+      if (selected == initAllAction) {
+        initSubmodules();
+      } else if (selected == updateAllAction) {
+        updateSubmodules();
+      } else if (selected == syncAllAction) {
+        syncSubmodules();
+      } else if (selected == addAction) {
+        addSubmodule();
+      }
+    } else {
+      selected = menu.exec(m_repoPanel->viewport()->mapToGlobal(pos));
+      if (selected == addAction)
+        addSubmodule();
     }
     return;
   }
@@ -3932,6 +3945,7 @@ void MainWindow::showSubmodulesContextMenu(const QPoint &pos) {
   auto *openAction = menu.addAction(tr("&Open"));
   auto *initAction = menu.addAction(tr("&Init"));
   auto *updateAction = menu.addAction(tr("&Update"));
+  auto *syncAction = menu.addAction(tr("&Sync"));
   auto *removeAction = menu.addAction(tr("&Remove"));
   selected = menu.exec(m_repoPanel->viewport()->mapToGlobal(pos));
   if (!selected)
@@ -3939,6 +3953,13 @@ void MainWindow::showSubmodulesContextMenu(const QPoint &pos) {
 
   if (selected == openAction) {
     loadRepository(m_currentPath + QLatin1Char('/') + subPath);
+  } else if (selected == syncAction) {
+    if (m_gitExecutor->exec(m_currentPath, {"submodule", "sync", subPath})) {
+      loadRepository(m_currentPath);
+      statusBar()->showMessage(tr("Submodule %1 synced").arg(subPath));
+    } else {
+      statusBar()->showMessage(tr("Failed to sync %1").arg(subPath));
+    }
   } else if (selected == initAction || selected == updateAction) {
     if (m_gitExecutor->exec(m_currentPath,
                             {"submodule", "update", "--init", subPath})) {
@@ -3996,6 +4017,22 @@ void MainWindow::updateSubmodules() {
     statusBar()->showMessage(tr("Submodules updated"));
   } else {
     statusBar()->showMessage(tr("Failed to update submodules"));
+  }
+}
+
+void MainWindow::syncSubmodules() {
+  if (m_currentPath.isEmpty()) {
+    QMessageBox::warning(this, tr("No repository"),
+                         tr("Open a repository first."));
+    return;
+  }
+
+  if (m_gitExecutor->exec(m_currentPath,
+                          {"submodule", "sync", "--recursive"})) {
+    loadWorkingTree();
+    statusBar()->showMessage(tr("Submodules synced"));
+  } else {
+    statusBar()->showMessage(tr("Failed to sync submodules"));
   }
 }
 

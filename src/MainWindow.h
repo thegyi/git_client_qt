@@ -76,6 +76,7 @@ private slots:
   void createPatchFromCommit(const QString &sha);
   void initSubmodules();
   void updateSubmodules();
+  void syncSubmodules();
   void addSubmodule();
   void openSubmodule();
   void showReflog();
