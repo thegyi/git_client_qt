@@ -406,20 +406,36 @@ MainWindow::MainWindow(QWidget *parent)
   connect(m_pushButton, &QToolButton::clicked, this, [this] {
     if (m_currentPath.isEmpty())
       return;
+
+    const QString currentBranch =
+        m_gitExecutor->run(m_currentPath, {"rev-parse", "--abbrev-ref", "HEAD"})
+            .value(0);
+    if (currentBranch.isEmpty()) {
+      QMessageBox::warning(this, tr("Push failed"),
+                           tr("Could not determine the current branch."));
+      return;
+    }
+
+    const QString remote =
+        m_gitExecutor
+            ->run(m_currentPath,
+                  {"config",
+                   QStringLiteral("branch.%1.remote").arg(currentBranch)})
+            .value(0);
+    const QString pushRemote =
+        remote.isEmpty() ? QStringLiteral("origin") : remote;
+
+    QStringList args = {QStringLiteral("push")};
+    for (const QString &arg : m_pushArgs) {
+      if (arg != QStringLiteral("push"))
+        args << arg;
+    }
+    args << QStringLiteral("-u") << pushRemote << currentBranch;
+
     QString output;
-    if (m_gitExecutor->exec(m_currentPath, m_pushArgs, &output)) {
-      const QString currentBranch =
-          m_gitExecutor
-              ->run(m_currentPath, {"rev-parse", "--abbrev-ref", "HEAD"})
-              .value(0);
-      const QString remote =
-          m_gitExecutor
-              ->run(m_currentPath,
-                    {"config",
-                     QStringLiteral("branch.%1.remote").arg(currentBranch)})
-              .value(0);
-      if (!remote.isEmpty() && !currentBranch.isEmpty())
-        m_gitExecutor->exec(m_currentPath, {"fetch", remote});
+    if (m_gitExecutor->exec(m_currentPath, args, &output)) {
+      if (!remote.isEmpty())
+        m_gitExecutor->exec(m_currentPath, {QStringLiteral("fetch"), remote});
       loadRepository(m_currentPath);
       statusBar()->showMessage(m_pushButton->text());
     } else {
