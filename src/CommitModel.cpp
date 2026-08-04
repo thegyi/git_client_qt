@@ -6,10 +6,8 @@ void CommitModel::loadLog(const QString &rawLog) {
   beginResetModel();
   m_commits.clear();
 
-  for (const QString &record :
-       rawLog.split(QChar(0x1e), Qt::SkipEmptyParts)) {
-    const QStringList fields =
-        record.trimmed().split(QChar(0x1f), Qt::KeepEmptyParts);
+  for (const QString &record : rawLog.split(QChar(0x1e), Qt::SkipEmptyParts)) {
+    const QStringList fields = record.split(QChar(0x1f), Qt::KeepEmptyParts);
     if (fields.size() < 9)
       continue;
 

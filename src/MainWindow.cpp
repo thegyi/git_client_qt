@@ -1696,6 +1696,8 @@ void MainWindow::loadRepository(const QString &path) {
     m_commitTable->setItem(0, 5, wipBranchesItem);
   }
 
+  int graphColumnWidth = 0;
+
   QProcess p;
   p.start("git",
           QStringList{"-C", path} +
@@ -1802,6 +1804,8 @@ void MainWindow::loadRepository(const QString &path) {
       graphFont.setStyleHint(QFont::Monospace);
       graphFont.setFamily("Monospace");
       graphItem->setFont(graphFont);
+      graphColumnWidth = qMax(
+          graphColumnWidth, QFontMetrics(graphFont).horizontalAdvance(c.graph));
       if (bgBrush != QBrush())
         graphItem->setBackground(bgBrush);
       m_commitTable->setItem(row, 0, graphItem);
@@ -1852,6 +1856,9 @@ void MainWindow::loadRepository(const QString &path) {
     m_commitTable->resizeColumnsToContents();
     m_commitTableWidthInitialized = true;
   }
+  m_commitTable->setColumnWidth(
+      0, qMax(m_commitTable->columnWidth(0), qMax(100, graphColumnWidth + 16)));
+
   const int tableWidth =
       m_commitTable->horizontalHeader()->length() +
       QApplication::style()->pixelMetric(QStyle::PM_ScrollBarExtent) +
