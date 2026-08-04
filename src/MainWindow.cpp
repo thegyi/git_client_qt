@@ -716,6 +716,8 @@ MainWindow::MainWindow(QWidget *parent)
   messageLayout->addWidget(m_amendCheckBox);
   m_signCommitCheckBox = new QCheckBox(tr("Sign with GPG"), this);
   messageLayout->addWidget(m_signCommitCheckBox);
+  connect(m_signCommitCheckBox, &QCheckBox::toggled, this,
+          &MainWindow::toggleGpgConfig);
   m_commitButton = new QPushButton(tr("Commit"), this);
   m_commitButton->setIcon(
       QApplication::style()->standardIcon(QStyle::SP_DialogOkButton));
@@ -1492,7 +1494,9 @@ void MainWindow::loadRepository(const QString &path) {
     const QString gpgSign =
         m_gitExecutor->run(path, {"config", "--bool", "commit.gpgsign"})
             .value(0);
+    m_signCommitCheckBox->blockSignals(true);
     m_signCommitCheckBox->setChecked(gpgSign == QLatin1String("true"));
+    m_signCommitCheckBox->blockSignals(false);
   }
   m_repoPanel->clear();
 
@@ -2445,25 +2449,6 @@ void MainWindow::onCommitClicked() {
       (m_amendCheckBox && m_amendCheckBox->isChecked())
           ? QStringList{"commit", "--amend", "-F", tempFile.fileName()}
           : QStringList{"commit", "-F", tempFile.fileName()};
-  if (m_signCommitCheckBox && m_signCommitCheckBox->isChecked()) {
-    QString signingKey =
-        m_gitExecutor->run(m_currentPath, {"config", "user.signingkey"})
-            .value(0);
-    if (signingKey.isEmpty()) {
-      QSettings appSettings("GitClientQt", "GitClientQt");
-      signingKey = appSettings.value("gpgSigningKey").toString().trimmed();
-    }
-    if (signingKey.isEmpty()) {
-      signingKey = QInputDialog::getText(this, tr("GPG key"),
-                                         tr("GPG key ID or email:"));
-      if (signingKey.isEmpty())
-        return;
-      signingKey = signingKey.trimmed();
-      m_gitExecutor->exec(m_currentPath,
-                          {"config", "user.signingkey", signingKey});
-    }
-    commitArgs << QStringLiteral("--gpg-sign=%1").arg(signingKey);
-  }
   if (m_gitExecutor->exec(m_currentPath, commitArgs)) {
     m_commitSubject->clear();
     m_commitBody->clear();
@@ -2476,6 +2461,48 @@ void MainWindow::onCommitClicked() {
   } else {
     statusBar()->showMessage(tr("Commit failed"));
   }
+}
+
+void MainWindow::toggleGpgConfig(bool enabled) {
+  if (m_currentPath.isEmpty())
+    return;
+
+  m_gitExecutor->exec(
+      m_currentPath,
+      {QStringLiteral("config"), QStringLiteral("commit.gpgsign"),
+       enabled ? QStringLiteral("true") : QStringLiteral("false")});
+
+  if (!enabled)
+    return;
+
+  QString signingKey =
+      m_gitExecutor
+          ->run(m_currentPath,
+                {QStringLiteral("config"), QStringLiteral("user.signingkey")})
+          .value(0);
+  if (signingKey.isEmpty()) {
+    QSettings appSettings("GitClientQt", "GitClientQt");
+    signingKey = appSettings.value("gpgSigningKey").toString().trimmed();
+  }
+  if (signingKey.isEmpty()) {
+    signingKey =
+        QInputDialog::getText(this, tr("GPG key"), tr("GPG key ID or email:"));
+    if (signingKey.isEmpty()) {
+      if (m_signCommitCheckBox) {
+        m_signCommitCheckBox->blockSignals(true);
+        m_signCommitCheckBox->setChecked(false);
+        m_signCommitCheckBox->blockSignals(false);
+      }
+      m_gitExecutor->exec(m_currentPath, {QStringLiteral("config"),
+                                          QStringLiteral("commit.gpgsign"),
+                                          QStringLiteral("false")});
+      return;
+    }
+    signingKey = signingKey.trimmed();
+  }
+  m_gitExecutor->exec(m_currentPath,
+                      {QStringLiteral("config"),
+                       QStringLiteral("user.signingkey"), signingKey});
 }
 
 void MainWindow::showEmptyDiff() {

@@ -95,6 +95,7 @@ private:
   bool repositoryStateChanged() const;
   void showHunkStaging(const QString &path, bool unstage);
   void onDiffAnchorClicked(const QUrl &link);
+  void toggleGpgConfig(bool enabled);
   void restoreSettings();
   void savePullMode();
   void loadWorkingTree();
