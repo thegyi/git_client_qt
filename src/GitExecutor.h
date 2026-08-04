@@ -13,9 +13,13 @@ public:
   explicit GitExecutor(QObject *parent = nullptr);
 
   QStringList run(const QString &path, const QStringList &args,
-                  int acceptedExitCode = 0) const;
+                  int acceptedExitCode = 0);
   bool exec(const QString &path, const QStringList &args,
-            QString *output = nullptr) const;
+            QString *output = nullptr);
+
+signals:
+  void commandLogged(const QString &command, const QString &output,
+                     int exitCode);
 };
 
 #endif // GITEXECUTOR_H

@@ -25,9 +25,11 @@
 #include <QFormLayout>
 #include <QFrame>
 #include <QGroupBox>
+#include <QGuiApplication>
 #include <QHeaderView>
 #include <QInputDialog>
 #include <QKeySequence>
+#include <QKeySequenceEdit>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMap>
@@ -35,6 +37,7 @@
 #include <QMessageBox>
 #include <QProcess>
 #include <QProcessEnvironment>
+#include <QScreen>
 #include <QSettings>
 #include <QShortcut>
 #include <QSplitter>
@@ -64,6 +67,7 @@
 #include <QRegularExpression>
 #include <QRegularExpressionMatch>
 #include <QStatusBar>
+#include <QTabWidget>
 #include <QTemporaryFile>
 #include <QTextEdit>
 #include <QToolBar>
@@ -77,8 +81,14 @@ MainWindow::MainWindow(QWidget *parent)
   m_commitModel = new CommitModel(this);
   m_workingTreeModel = new WorkingTreeModel(this);
   ui->setupUi(this);
+  ui->menuFile->setTitle(tr("&File"));
+  ui->menuEdit->setTitle(tr("&Edit"));
+  ui->menuHelp->setTitle(tr("&Help"));
   setStyleSheet("QMainWindow::separator { background: #808080; width: 4px; }"
-                "QMenu::item { padding: 6px 24px 6px 12px; }");
+                "QMenu::item { padding: 6px 24px 6px 12px; }"
+                "QMenu::item:selected { background-color: palette(highlight); "
+                "color: palette(highlighted-text); }");
+  setDockNestingEnabled(true);
 
   m_watcher = new QFileSystemWatcher(this);
   m_fsDebounceTimer = new QTimer(this);
@@ -96,14 +106,14 @@ MainWindow::MainWindow(QWidget *parent)
   m_recentMenu = new QMenu(tr("Recent Repositories"), this);
   ui->menuFile->insertMenu(ui->actionClose, m_recentMenu);
 
-  auto *searchMenu = new QMenu(tr("Search"), this);
+  auto *searchMenu = new QMenu(tr("&Search"), this);
   menuBar()->addMenu(searchMenu);
   auto *grepAction = searchMenu->addAction(tr("Grep"));
   grepAction->setStatusTip(tr("Search for a pattern in the repository"));
   grepAction->setShortcut(QKeySequence(QLatin1String("Ctrl+Shift+G")));
   connect(grepAction, &QAction::triggered, this, &MainWindow::onGrepRequested);
 
-  auto *submodulesMenu = new QMenu(tr("Submodules"), this);
+  auto *submodulesMenu = new QMenu(tr("&Submodules"), this);
   menuBar()->addMenu(submodulesMenu);
   auto *initSubmodulesAction = submodulesMenu->addAction(tr("Init"));
   initSubmodulesAction->setStatusTip(
@@ -123,7 +133,7 @@ MainWindow::MainWindow(QWidget *parent)
   connect(openSubmoduleAction, &QAction::triggered, this,
           &MainWindow::openSubmodule);
 
-  auto *repositoryMenu = new QMenu(tr("Repository"), this);
+  auto *repositoryMenu = new QMenu(tr("&Repository"), this);
   menuBar()->addMenu(repositoryMenu);
 
   if (ui->menuHelp) {
@@ -137,17 +147,34 @@ MainWindow::MainWindow(QWidget *parent)
   connect(repoSettingsAction, &QAction::triggered, this,
           &MainWindow::showRepositorySettings);
 
+  auto *hooksAndTemplatesAction =
+      repositoryMenu->addAction(tr("Commit hooks and templates..."));
+  hooksAndTemplatesAction->setStatusTip(
+      tr("Edit commit message template and repository hooks"));
+  hooksAndTemplatesAction->setShortcut(
+      QKeySequence(QLatin1String("Ctrl+Shift+H")));
+  connect(hooksAndTemplatesAction, &QAction::triggered, this,
+          &MainWindow::showCommitHooksAndTemplates);
+
+  auto *applyPatchAction = repositoryMenu->addAction(tr("Apply patch..."));
+  applyPatchAction->setStatusTip(tr("Apply a patch or diff file"));
+  applyPatchAction->setShortcut(QKeySequence(QLatin1String("Ctrl+Shift+P")));
+  connect(applyPatchAction, &QAction::triggered, this, &MainWindow::applyPatch);
+
   auto *reflogAction = repositoryMenu->addAction(tr("Reflog"));
   reflogAction->setStatusTip(tr("View the reference log"));
+  reflogAction->setShortcut(QKeySequence(QLatin1String("Ctrl+Shift+R")));
   connect(reflogAction, &QAction::triggered, this, &MainWindow::showReflog);
 
   auto *resolveConflictsAction =
       repositoryMenu->addAction(tr("Resolve conflicts..."));
   resolveConflictsAction->setStatusTip(tr("Resolve merge conflicts"));
+  resolveConflictsAction->setShortcut(
+      QKeySequence(QLatin1String("Ctrl+Shift+C")));
   connect(resolveConflictsAction, &QAction::triggered, this,
           [this]() { showConflictResolver(QString()); });
 
-  auto *bisectMenu = repositoryMenu->addMenu(tr("Bisect"));
+  auto *bisectMenu = repositoryMenu->addMenu(tr("&Bisect"));
   auto *bisectStartAction = bisectMenu->addAction(tr("Start..."));
   auto *bisectGoodAction = bisectMenu->addAction(tr("Good"));
   auto *bisectBadAction = bisectMenu->addAction(tr("Bad"));
@@ -161,7 +188,7 @@ MainWindow::MainWindow(QWidget *parent)
   connect(bisectResetAction, &QAction::triggered, this,
           &MainWindow::bisectReset);
 
-  auto *lfsMenu = repositoryMenu->addMenu(tr("LFS"));
+  auto *lfsMenu = repositoryMenu->addMenu(tr("&LFS"));
   auto *lfsTrackAction = lfsMenu->addAction(tr("Track pattern..."));
   auto *lfsUntrackAction = lfsMenu->addAction(tr("Untrack pattern..."));
   auto *lfsPullAction = lfsMenu->addAction(tr("Pull objects"));
@@ -198,16 +225,28 @@ MainWindow::MainWindow(QWidget *parent)
           &MainWindow::onCloneRepository);
 
   auto *actionInit = new QAction(tr("Initialize Repository"), this);
-  ui->menuFile->insertAction(ui->actionExit, actionInit);
+  ui->menuFile->insertAction(ui->actionOpen, actionInit);
   actionInit->setStatusTip(tr("Create a new Git repository"));
   actionInit->setShortcut(QKeySequence(QLatin1String("Ctrl+N")));
   connect(actionInit, &QAction::triggered, this, &MainWindow::onInitRepository);
 
   auto *editGitignoreAction = new QAction(tr("Edit .gitignore"), this);
-  ui->menuFile->insertAction(ui->actionExit, editGitignoreAction);
   editGitignoreAction->setStatusTip(tr("Edit the repository .gitignore file"));
+  editGitignoreAction->setShortcut(QKeySequence(QLatin1String("Ctrl+Shift+I")));
   connect(editGitignoreAction, &QAction::triggered, this,
           &MainWindow::editGitignore);
+
+  auto *editGitattributesAction = new QAction(tr("Edit .gitattributes"), this);
+  editGitattributesAction->setStatusTip(
+      tr("Edit the repository .gitattributes file"));
+  editGitattributesAction->setShortcut(
+      QKeySequence(QLatin1String("Ctrl+Shift+A")));
+  connect(editGitattributesAction, &QAction::triggered, this,
+          &MainWindow::editGitattributes);
+
+  ui->menuEdit->insertAction(ui->actionPreferences, editGitattributesAction);
+  ui->menuEdit->insertAction(editGitattributesAction, editGitignoreAction);
+  ui->menuEdit->insertSeparator(ui->actionPreferences);
 
   auto *filterBar = addToolBar(tr("Filter"));
   filterBar->setMovable(false);
@@ -513,7 +552,44 @@ MainWindow::MainWindow(QWidget *parent)
   m_commitTable->setContextMenuPolicy(Qt::CustomContextMenu);
   connect(m_commitTable, &QTableWidget::customContextMenuRequested, this,
           &MainWindow::showCommitContextMenu);
-  setCentralWidget(m_commitTable);
+
+  m_centralStack = new QStackedWidget(this);
+  auto *welcomeWidget = new QWidget(m_centralStack);
+  auto *welcomeLayout = new QVBoxLayout(welcomeWidget);
+  welcomeLayout->setAlignment(Qt::AlignCenter);
+
+  auto *welcomeIcon = new QLabel(welcomeWidget);
+  welcomeIcon->setText(tr("Git Client Qt"));
+  QFont iconFont = welcomeIcon->font();
+  iconFont.setPointSize(18);
+  iconFont.setBold(true);
+  welcomeIcon->setFont(iconFont);
+  welcomeIcon->setAlignment(Qt::AlignCenter);
+  welcomeLayout->addWidget(welcomeIcon);
+
+  auto *welcomeLabel = new QLabel(tr("No repository open"), welcomeWidget);
+  welcomeLabel->setAlignment(Qt::AlignCenter);
+  welcomeLayout->addWidget(welcomeLabel);
+  welcomeLayout->addSpacing(24);
+
+  auto *openButton = new QPushButton(tr("Open Repository"), welcomeWidget);
+  auto *cloneButton = new QPushButton(tr("Clone Repository"), welcomeWidget);
+  auto *initButton =
+      new QPushButton(tr("Initialize Repository"), welcomeWidget);
+  welcomeLayout->addWidget(openButton);
+  welcomeLayout->addWidget(cloneButton);
+  welcomeLayout->addWidget(initButton);
+
+  connect(openButton, &QPushButton::clicked, ui->actionOpen, &QAction::trigger);
+  connect(cloneButton, &QPushButton::clicked, this,
+          &MainWindow::onCloneRepository);
+  connect(initButton, &QPushButton::clicked, this,
+          &MainWindow::onInitRepository);
+
+  m_centralStack->addWidget(welcomeWidget);
+  m_centralStack->addWidget(m_commitTable);
+  m_centralStack->setCurrentIndex(0);
+  setCentralWidget(m_centralStack);
 
   m_repoPanel = new RepoPanelWidget(this);
   connect(
@@ -641,8 +717,8 @@ MainWindow::MainWindow(QWidget *parent)
   addDockWidget(Qt::RightDockWidgetArea, rightDock);
   m_workTreeDock = rightDock;
 
-  auto *diffDock = new QDockWidget(tr("Diff"), this);
-  diffDock->setObjectName(QStringLiteral("diffDock"));
+  m_diffDock = new QDockWidget(tr("Diff"), this);
+  m_diffDock->setObjectName(QStringLiteral("diffDock"));
   m_diffView = new DiffViewWidget(this);
   m_diffView->setMinimumHeight(120);
   m_diffView->setFont(QFont(QStringLiteral("monospace"), 10));
@@ -692,10 +768,51 @@ MainWindow::MainWindow(QWidget *parent)
   m_grepDock->setVisible(false);
   addDockWidget(Qt::RightDockWidgetArea, m_grepDock);
   tabifyDockWidget(rightDock, m_grepDock);
-  diffDock->setWidget(m_diffView);
-  diffDock->setFeatures(QDockWidget::DockWidgetMovable |
-                        QDockWidget::DockWidgetFloatable);
-  addDockWidget(Qt::BottomDockWidgetArea, diffDock);
+
+  m_commandLogDock = new QDockWidget(tr("Command Log"), this);
+  m_commandLogDock->setObjectName(QStringLiteral("commandLogDock"));
+  m_commandLogEdit = new QTextEdit(this);
+  m_commandLogEdit->setReadOnly(true);
+  m_commandLogEdit->setFont(QFont(QStringLiteral("monospace"), 9));
+  m_commandLogDock->setWidget(m_commandLogEdit);
+  m_commandLogDock->setFeatures(QDockWidget::DockWidgetMovable |
+                                QDockWidget::DockWidgetFloatable |
+                                QDockWidget::DockWidgetClosable);
+  m_commandLogDock->setVisible(false);
+  addDockWidget(Qt::BottomDockWidgetArea, m_commandLogDock);
+
+  connect(m_gitExecutor, &GitExecutor::commandLogged, this,
+          [this](const QString &command, const QString &output, int exitCode) {
+            if (!m_commandLogEdit)
+              return;
+            m_commandLogEdit->append(
+                tr("> %1 (exit %2)").arg(command).arg(exitCode));
+            if (!output.isEmpty())
+              m_commandLogEdit->append(output);
+            m_commandLogEdit->append(QString());
+          });
+
+  m_diffDock->setWidget(m_diffView);
+  m_diffDock->setFeatures(QDockWidget::DockWidgetMovable);
+  addDockWidget(Qt::BottomDockWidgetArea, m_diffDock);
+
+  auto *viewMenu = new QMenu(tr("&View"), this);
+  menuBar()->insertMenu(ui->menuHelp->menuAction(), viewMenu);
+
+  auto addVisibilityAction = [&](const QString &title, QDockWidget *dock) {
+    auto *action = viewMenu->addAction(title);
+    action->setCheckable(true);
+    action->setChecked(dock->isVisible());
+    connect(action, &QAction::toggled, dock, &QDockWidget::setVisible);
+    connect(dock, &QDockWidget::visibilityChanged, action,
+            &QAction::setChecked);
+  };
+
+  addVisibilityAction(tr("Repository panel"), m_repoDock);
+  addVisibilityAction(tr("Working tree"), m_workTreeDock);
+  addVisibilityAction(tr("Diff"), m_diffDock);
+  addVisibilityAction(tr("Grep"), m_grepDock);
+  addVisibilityAction(tr("Command log"), m_commandLogDock);
 
   connect(ui->actionOpen, &QAction::triggered, this, [this] {
     const QString path =
@@ -727,6 +844,8 @@ MainWindow::MainWindow(QWidget *parent)
     m_commitTable->clear();
     m_commitTable->setRowCount(0);
     m_commitTable->horizontalHeader()->setVisible(false);
+    if (m_centralStack)
+      m_centralStack->setCurrentIndex(0);
     if (m_unstagedTree)
       m_unstagedTree->clear();
     if (m_stagedTree)
@@ -804,6 +923,22 @@ void MainWindow::restoreSettings() {
     m_pullArgs.clear();
     m_pullArgs << "pull";
   }
+
+  for (QAction *action : findChildren<QAction *>()) {
+    QMenu *menu = qobject_cast<QMenu *>(action->parent());
+    if (!menu)
+      continue;
+    QString menuName = menu->title();
+    menuName.remove('&');
+    QString text = action->text();
+    text.remove('&');
+    if (text.isEmpty())
+      continue;
+    const QString key =
+        QLatin1String("shortcuts/") + menuName + QLatin1Char('/') + text;
+    if (settings.contains(key))
+      action->setShortcut(QKeySequence(settings.value(key).toString()));
+  }
 }
 
 void MainWindow::savePullMode() {
@@ -847,8 +982,37 @@ void MainWindow::restoreDockAndColumnState() {
   const QByteArray state = settings.value("mainWindow/state").toByteArray();
   if (!geometry.isEmpty())
     restoreGeometry(geometry);
+
+  bool onScreen = false;
+  const QRect windowRect = QRect(pos(), size());
+  for (QScreen *screen : QGuiApplication::screens()) {
+    if (screen->availableGeometry().intersects(windowRect)) {
+      onScreen = true;
+      break;
+    }
+  }
+  if (!onScreen) {
+    const QRect screenRect =
+        QGuiApplication::primaryScreen()->availableGeometry();
+    setGeometry(screenRect.adjusted(100, 100, -100, -100));
+  }
+
   if (!state.isEmpty())
     restoreState(state, 0);
+
+  if (m_diffDock && m_diffDock->isFloating())
+    m_diffDock->setFloating(false);
+
+  if (m_repoDock)
+    m_repoDock->setVisible(true);
+  if (m_workTreeDock)
+    m_workTreeDock->setVisible(true);
+  if (m_diffDock)
+    m_diffDock->setVisible(false);
+  if (m_grepDock)
+    m_grepDock->setVisible(false);
+  if (m_commandLogDock)
+    m_commandLogDock->setVisible(false);
 
   const QHash<QTreeWidget *, QString> trees = {
       {m_unstagedTree, QStringLiteral("headers/unstagedTree")},
@@ -922,7 +1086,14 @@ void MainWindow::showPreferences() {
   QSettings settings("GitClientQt", "GitClientQt");
   QDialog dlg(this);
   dlg.setWindowTitle(tr("Preferences"));
-  auto *layout = new QFormLayout(&dlg);
+  dlg.setMinimumSize(550, 450);
+  auto *mainLayout = new QVBoxLayout(&dlg);
+
+  auto *tabs = new QTabWidget(&dlg);
+  mainLayout->addWidget(tabs);
+
+  auto *generalTab = new QWidget(&dlg);
+  auto *generalLayout = new QFormLayout(generalTab);
 
   auto *pullModeCombo = new QComboBox(&dlg);
   pullModeCombo->addItem(tr("Pull (fast-forward if possible)"),
@@ -941,13 +1112,71 @@ void MainWindow::showPreferences() {
   auto *gpgKeyEdit = new QLineEdit(&dlg);
   gpgKeyEdit->setText(settings.value("gpgSigningKey").toString());
 
-  layout->addRow(tr("Default pull mode:"), pullModeCombo);
-  layout->addWidget(reopenBox);
-  layout->addRow(tr("GPG key ID or email:"), gpgKeyEdit);
+  generalLayout->addRow(tr("Default pull mode:"), pullModeCombo);
+  generalLayout->addWidget(reopenBox);
+  generalLayout->addRow(tr("GPG key ID or email:"), gpgKeyEdit);
+  tabs->addTab(generalTab, tr("General"));
+
+  auto *shortcutsTab = new QWidget(&dlg);
+  auto *shortcutsLayout = new QVBoxLayout(shortcutsTab);
+  auto *table = new QTableWidget(&dlg);
+  table->setColumnCount(3);
+  table->setHorizontalHeaderLabels({tr("Menu"), tr("Action"), tr("Shortcut")});
+  table->horizontalHeader()->setStretchLastSection(true);
+  table->setSelectionBehavior(QAbstractItemView::SelectRows);
+  table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+  shortcutsLayout->addWidget(table);
+  tabs->addTab(shortcutsTab, tr("Shortcuts"));
+
+  QMap<QString, QAction *> actionMap;
+  QList<QMenu *> menus;
+  QSet<QMenu *> visited;
+  for (QAction *top : menuBar()->actions()) {
+    if (QMenu *m = top->menu())
+      menus.append(m);
+  }
+  while (!menus.isEmpty()) {
+    QMenu *menu = menus.takeFirst();
+    if (visited.contains(menu))
+      continue;
+    visited.insert(menu);
+    for (QAction *action : menu->actions()) {
+      if (action->isSeparator())
+        continue;
+      if (QMenu *sub = action->menu()) {
+        menus.append(sub);
+      } else {
+        QString menuName = menu->title();
+        menuName.remove('&');
+        QString text = action->text();
+        text.remove('&');
+        if (text.isEmpty())
+          continue;
+        QString key = menuName + QLatin1Char('/') + text;
+        actionMap.insert(key, action);
+      }
+    }
+  }
+
+  table->setRowCount(actionMap.size());
+  int row = 0;
+  QMap<QString, QKeySequenceEdit *> shortcutEdits;
+  for (auto it = actionMap.begin(); it != actionMap.end(); ++it) {
+    const QString key = it.key();
+    const int slash = key.indexOf(QLatin1Char('/'));
+    const QString menuName = key.left(slash);
+    const QString actionName = key.mid(slash + 1);
+    table->setItem(row, 0, new QTableWidgetItem(menuName));
+    table->setItem(row, 1, new QTableWidgetItem(actionName));
+    auto *seqEdit = new QKeySequenceEdit(it.value()->shortcut(), &dlg);
+    shortcutEdits.insert(key, seqEdit);
+    table->setCellWidget(row, 2, seqEdit);
+    ++row;
+  }
 
   auto *buttons = new QDialogButtonBox(
       QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
-  layout->addRow(buttons);
+  mainLayout->addWidget(buttons);
   connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
   connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
 
@@ -958,6 +1187,15 @@ void MainWindow::showPreferences() {
   settings.setValue("pullMode", pullMode);
   settings.setValue("reopenLastRepo", reopenBox->isChecked());
   settings.setValue("gpgSigningKey", gpgKeyEdit->text().trimmed());
+
+  for (auto it = actionMap.begin(); it != actionMap.end(); ++it) {
+    QKeySequenceEdit *seqEdit = shortcutEdits.value(it.key());
+    if (!seqEdit)
+      continue;
+    const QKeySequence seq = seqEdit->keySequence();
+    it.value()->setShortcut(seq);
+    settings.setValue(QLatin1String("shortcuts/") + it.key(), seq.toString());
+  }
 
   if (m_pullButton && m_pullButton->menu()) {
     for (QAction *action : m_pullButton->menu()->actions()) {
@@ -1037,6 +1275,8 @@ void MainWindow::loadRepository(const QString &path) {
   }
   m_currentPath = repoRoot;
   m_gitRepository->setPath(m_currentPath);
+  if (m_centralStack)
+    m_centralStack->setCurrentIndex(1);
   if (m_watcher) {
     m_watcher->removePaths(m_watcher->directories());
     m_watcher->removePaths(m_watcher->files());
@@ -1446,23 +1686,23 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
   QAction *selected = nullptr;
 
   if (isLocal) {
-    auto *switchAction = menu.addAction(tr("Switch to %1").arg(branchName));
-    auto *pushAction = menu.addAction(tr("Push %1 to remote").arg(branchName));
-    auto *setUpstreamAction = menu.addAction(tr("Set upstream"));
+    auto *switchAction = menu.addAction(tr("&Switch to %1").arg(branchName));
+    auto *pushAction = menu.addAction(tr("&Push %1 to remote").arg(branchName));
+    auto *setUpstreamAction = menu.addAction(tr("Set u&pstream"));
     auto *createAction =
-        menu.addAction(tr("Create branch from %1").arg(branchName));
-    auto *renameAction = menu.addAction(tr("Rename"));
+        menu.addAction(tr("&Create branch from %1").arg(branchName));
+    auto *renameAction = menu.addAction(tr("&Rename"));
     const QString currentBranch =
         m_gitExecutor->run(m_currentPath, {"rev-parse", "--abbrev-ref", "HEAD"})
             .value(0);
     auto *mergeAction =
         (branchName != currentBranch)
-            ? menu.addAction(tr("Merge %1 into current").arg(branchName))
+            ? menu.addAction(tr("&Merge %1 into current").arg(branchName))
             : nullptr;
     auto *rebaseAction =
-        menu.addAction(tr("Rebase %1 onto...").arg(branchName));
+        menu.addAction(tr("Reb&ase %1 onto...").arg(branchName));
     auto *deleteAction =
-        (branchName != currentBranch) ? menu.addAction(tr("Delete")) : nullptr;
+        (branchName != currentBranch) ? menu.addAction(tr("&Delete")) : nullptr;
     selected = menu.exec(m_repoPanel->viewport()->mapToGlobal(pos));
 
     if (!selected) {
@@ -1655,7 +1895,7 @@ void MainWindow::showStashContextMenu(const QPoint &pos) {
 
   QMenu menu(this);
   if (item == m_stashesItem) {
-    auto *createAction = menu.addAction(tr("Create Stash"));
+    auto *createAction = menu.addAction(tr("&Create Stash"));
     if (menu.exec(m_repoPanel->viewport()->mapToGlobal(pos)) != createAction)
       return;
 
@@ -1682,10 +1922,10 @@ void MainWindow::showStashContextMenu(const QPoint &pos) {
   if (ref.isEmpty())
     return;
 
-  auto *popAction = menu.addAction(tr("Pop Stash"));
-  auto *applyAction = menu.addAction(tr("Apply Stash"));
-  auto *deleteAction = menu.addAction(tr("Delete Stash"));
-  auto *viewDiffAction = menu.addAction(tr("View diff"));
+  auto *popAction = menu.addAction(tr("&Pop Stash"));
+  auto *applyAction = menu.addAction(tr("&Apply Stash"));
+  auto *deleteAction = menu.addAction(tr("&Delete Stash"));
+  auto *viewDiffAction = menu.addAction(tr("&View diff"));
   QAction *selected = menu.exec(m_repoPanel->viewport()->mapToGlobal(pos));
 
   if (selected == popAction) {
@@ -1755,7 +1995,7 @@ void MainWindow::showTagContextMenu(const QPoint &pos) {
 
   QMenu menu(this);
   if (item == m_tagsItem) {
-    auto *createAction = menu.addAction(tr("Create Tag at HEAD"));
+    auto *createAction = menu.addAction(tr("&Create Tag at HEAD"));
     if (menu.exec(m_repoPanel->viewport()->mapToGlobal(pos)) == createAction) {
       bool ok;
       const QString tagName =
@@ -1778,9 +2018,9 @@ void MainWindow::showTagContextMenu(const QPoint &pos) {
     }
   } else if (item->parent() == m_tagsItem) {
     const QString tagName = item->text(0);
-    auto *checkoutAction = menu.addAction(tr("Checkout Tag %1").arg(tagName));
-    auto *pushAction = menu.addAction(tr("Push Tag %1").arg(tagName));
-    auto *deleteAction = menu.addAction(tr("Delete Tag %1").arg(tagName));
+    auto *checkoutAction = menu.addAction(tr("Ch&eckout Tag %1").arg(tagName));
+    auto *pushAction = menu.addAction(tr("&Push Tag %1").arg(tagName));
+    auto *deleteAction = menu.addAction(tr("&Delete Tag %1").arg(tagName));
     QAction *selected = menu.exec(m_repoPanel->viewport()->mapToGlobal(pos));
 
     if (selected == checkoutAction) {
@@ -2103,33 +2343,33 @@ void MainWindow::showUnstagedContextMenu(const QPoint &pos) {
 
   QMenu menu(this);
   QAction *stageAction =
-      menu.addAction(isFolder ? tr("Stage folder") : tr("Stage file"));
+      menu.addAction(isFolder ? tr("&Stage folder") : tr("&Stage file"));
   stageAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_S));
   if (!isFolder)
     stageAction->setIcon(
         QApplication::style()->standardIcon(QStyle::SP_ArrowRight));
   QAction *stashAction =
-      menu.addAction(isFolder ? tr("Stash folder") : tr("Stash file"));
+      menu.addAction(isFolder ? tr("S&tash folder") : tr("S&tash file"));
   QAction *discardAction =
-      menu.addAction(isFolder ? tr("Discard all changes in this folder")
-                              : tr("Discard all changes"));
+      menu.addAction(isFolder ? tr("&Discard all changes in this folder")
+                              : tr("&Discard all changes"));
   QAction *ignoreAction = nullptr;
   if (isFolder || hasNew) {
     ignoreAction = menu.addAction(
-        isFolder ? tr("Ignore all files in this folder") : tr("Ignore"));
+        isFolder ? tr("&Ignore all files in this folder") : tr("&Ignore"));
   }
   QAction *blameAction = nullptr;
   if (!isFolder) {
-    blameAction = menu.addAction(tr("Blame"));
+    blameAction = menu.addAction(tr("&Blame"));
   }
   QAction *stageHunksAction = nullptr;
   if (!isFolder && hasTracked) {
-    stageHunksAction = menu.addAction(tr("Stage hunks"));
+    stageHunksAction = menu.addAction(tr("Stage &hunks"));
   }
   QAction *externalDiffAction = nullptr;
   if (!isFolder && hasTracked &&
       !m_gitExecutor->run(m_currentPath, {"config", "diff.tool"}).isEmpty()) {
-    externalDiffAction = menu.addAction(tr("Open in external diff tool"));
+    externalDiffAction = menu.addAction(tr("O&pen in external diff tool"));
   }
 
   QAction *selected = menu.exec(m_unstagedTree->mapToGlobal(pos));
@@ -2184,7 +2424,7 @@ void MainWindow::showRemotesContextMenu(const QPoint &pos) {
 
   QMenu menu(this);
   if (item == m_remotesItem) {
-    auto *addAction = menu.addAction(tr("Add Remote"));
+    auto *addAction = menu.addAction(tr("&Add Remote"));
     if (menu.exec(m_repoPanel->viewport()->mapToGlobal(pos)) != addAction)
       return;
 
@@ -2209,10 +2449,10 @@ void MainWindow::showRemotesContextMenu(const QPoint &pos) {
   } else if (item->parent() == m_remotesItem) {
     const QString remoteName = item->data(0, Qt::UserRole).toString();
     const QString currentUrl = item->data(0, Qt::UserRole + 1).toString();
-    auto *editAction = menu.addAction(tr("Edit URL"));
-    auto *renameAction = menu.addAction(tr("Rename"));
-    auto *pruneAction = menu.addAction(tr("Prune"));
-    auto *removeAction = menu.addAction(tr("Remove Remote"));
+    auto *editAction = menu.addAction(tr("&Edit URL"));
+    auto *renameAction = menu.addAction(tr("&Rename"));
+    auto *pruneAction = menu.addAction(tr("&Prune"));
+    auto *removeAction = menu.addAction(tr("&Remove Remote"));
     QAction *selected = menu.exec(m_repoPanel->viewport()->mapToGlobal(pos));
 
     if (selected == editAction) {
@@ -2281,23 +2521,23 @@ void MainWindow::showStagedContextMenu(const QPoint &pos) {
   QMenu menu(this);
   const QString path = m_stagedTree->itemPath(item);
   QAction *unstageAction =
-      menu.addAction(isFolder ? tr("Unstage folder") : tr("Unstage file"));
+      menu.addAction(isFolder ? tr("&Unstage folder") : tr("&Unstage file"));
   unstageAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_U));
   if (!isFolder)
     unstageAction->setIcon(
         QApplication::style()->standardIcon(QStyle::SP_ArrowLeft));
   QAction *unstageHunksAction = nullptr;
   if (!isFolder) {
-    unstageHunksAction = menu.addAction(tr("Unstage hunks"));
+    unstageHunksAction = menu.addAction(tr("U&nstage hunks"));
   }
   QAction *blameAction = nullptr;
   if (!isFolder) {
-    blameAction = menu.addAction(tr("Blame"));
+    blameAction = menu.addAction(tr("&Blame"));
   }
   QAction *externalDiffAction = nullptr;
   if (!isFolder &&
       !m_gitExecutor->run(m_currentPath, {"config", "diff.tool"}).isEmpty()) {
-    externalDiffAction = menu.addAction(tr("Open in external diff tool"));
+    externalDiffAction = menu.addAction(tr("O&pen in external diff tool"));
   }
   QAction *selected = menu.exec(m_stagedTree->mapToGlobal(pos));
   if (!selected)
@@ -2330,18 +2570,19 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
     return;
 
   QMenu menu(this);
-  auto *checkoutAction = menu.addAction(tr("Checkout this Commit"));
+  auto *checkoutAction = menu.addAction(tr("&Checkout this Commit"));
   auto *createBranchAction =
-      menu.addAction(tr("Create branch from this commit"));
-  auto *createTagAction = menu.addAction(tr("Create Tag for this Commit"));
-  auto *diffAction = menu.addAction(tr("Diff with another commit"));
+      menu.addAction(tr("Create &branch from this commit"));
+  auto *createTagAction = menu.addAction(tr("Create &Tag for this Commit"));
+  auto *diffAction = menu.addAction(tr("&Diff with another commit"));
   auto *interactiveRebaseAction =
-      menu.addAction(tr("Interactive rebase from here"));
-  auto *cherryPickAction = menu.addAction(tr("Cherry-pick this commit"));
-  auto *revertAction = menu.addAction(tr("Revert this commit"));
-  auto *squashAction = menu.addAction(tr("Squash with previous"));
-  auto *fixupAction = menu.addAction(tr("Fixup into previous"));
-  auto *resetAction = menu.addAction(tr("Reset to this commit"));
+      menu.addAction(tr("&Interactive rebase from here"));
+  auto *cherryPickAction = menu.addAction(tr("Cherry-&pick this commit"));
+  auto *revertAction = menu.addAction(tr("&Revert this commit"));
+  auto *squashAction = menu.addAction(tr("&Squash with previous"));
+  auto *fixupAction = menu.addAction(tr("Fi&xup into previous"));
+  auto *resetAction = menu.addAction(tr("R&eset to this commit"));
+  auto *savePatchAction = menu.addAction(tr("Sa&ve as patch..."));
   QAction *selected = menu.exec(m_commitTable->viewport()->mapToGlobal(pos));
 
   if (selected == checkoutAction) {
@@ -2465,6 +2706,11 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
     return;
   }
 
+  if (selected == savePatchAction) {
+    createPatchFromCommit(sha);
+    return;
+  }
+
   if (selected != createTagAction)
     return;
 
@@ -2531,7 +2777,8 @@ void MainWindow::diffWithCommit(const QString &fromSha) {
     m_diffView->showEmpty(tr("No diff"),
                           tr("No changes to show for this selection."));
   else
-    m_diffView->setHtml(m_diffPresenter->formatDiff(diff));
+    m_diffDock->setVisible(true);
+  m_diffView->setHtml(m_diffPresenter->formatDiff(diff));
   statusBar()->showMessage(
       tr("Diff between %1 and %2").arg(fromSha.left(7), toSha.left(7)));
 }
@@ -2548,11 +2795,11 @@ void MainWindow::showCommitFilesContextMenu(const QPoint &pos) {
   QMenu menu(this);
   auto *externalDiffAction =
       !m_gitExecutor->run(m_currentPath, {"config", "diff.tool"}).isEmpty()
-          ? menu.addAction(tr("View diff in external diff tool"))
+          ? menu.addAction(tr("&View diff in external diff tool"))
           : nullptr;
   if (externalDiffAction)
     menu.addSeparator();
-  auto *blameAction = menu.addAction(tr("Blame"));
+  auto *blameAction = menu.addAction(tr("&Blame"));
   auto *selected = menu.exec(m_commitFilesTree->mapToGlobal(pos));
 
   if (selected == externalDiffAction) {
@@ -2707,6 +2954,7 @@ void MainWindow::onCommitFileClicked(QTreeWidgetItem *item, int column) {
     const QString html = m_diffPresenter->isLfsPointer(diff)
                              ? m_diffPresenter->lfsPointerHtml(diff)
                              : m_diffPresenter->formatDiff(diff);
+    m_diffDock->setVisible(true);
     m_diffView->setHtml(html);
   }
 }
@@ -2845,7 +3093,7 @@ void MainWindow::showWorktreeContextMenu(const QPoint &pos) {
 
   if (item == m_worktreesItem) {
     QMenu menu(this);
-    auto *addAction = menu.addAction(tr("Add worktree..."));
+    auto *addAction = menu.addAction(tr("&Add worktree..."));
     if (menu.exec(m_repoPanel->viewport()->mapToGlobal(pos)) != addAction)
       return;
 
@@ -2898,8 +3146,8 @@ void MainWindow::showWorktreeContextMenu(const QPoint &pos) {
     return;
 
   QMenu menu(this);
-  auto *openAction = menu.addAction(tr("Open"));
-  auto *removeAction = menu.addAction(tr("Remove"));
+  auto *openAction = menu.addAction(tr("&Open"));
+  auto *removeAction = menu.addAction(tr("&Remove"));
   QAction *selected = menu.exec(m_repoPanel->viewport()->mapToGlobal(pos));
 
   if (selected == openAction) {
@@ -2972,7 +3220,8 @@ void MainWindow::onStashClicked(QTreeWidgetItem *item, int column) {
       m_diffView->showEmpty(tr("No diff"),
                             tr("No changes to show for this selection."));
     else
-      m_diffView->setHtml(m_diffPresenter->formatDiff(diff));
+      m_diffDock->setVisible(true);
+    m_diffView->setHtml(m_diffPresenter->formatDiff(diff));
   }
 }
 
@@ -3006,6 +3255,7 @@ void MainWindow::onFileClicked(QTreeWidgetItem *item, int column) {
         const QString html = m_diffPresenter->isLfsPointer(diff)
                                  ? m_diffPresenter->lfsPointerHtml(diff)
                                  : m_diffPresenter->formatDiff(diff);
+        m_diffDock->setVisible(true);
         m_diffView->setHtml(html);
       }
     } else {
@@ -3021,6 +3271,7 @@ void MainWindow::onFileClicked(QTreeWidgetItem *item, int column) {
         const QString html = m_diffPresenter->isLfsPointer(diff)
                                  ? m_diffPresenter->lfsPointerHtml(diff)
                                  : m_diffPresenter->formatDiff(diff);
+        m_diffDock->setVisible(true);
         m_diffView->setHtml(html);
       }
     }
@@ -3039,6 +3290,7 @@ void MainWindow::onFileClicked(QTreeWidgetItem *item, int column) {
     const QString html = m_diffPresenter->isLfsPointer(diff)
                              ? m_diffPresenter->lfsPointerHtml(diff)
                              : m_diffPresenter->formatDiff(diff);
+    m_diffDock->setVisible(true);
     m_diffView->setHtml(html);
   }
 }
@@ -3054,6 +3306,8 @@ void MainWindow::editGitignore() {
 
   QDialog dlg(this);
   dlg.setWindowTitle(tr("Edit .gitignore"));
+  dlg.setMinimumSize(500, 400);
+  dlg.resize(700, 500);
   auto *layout = new QVBoxLayout(&dlg);
   auto *edit = new QTextEdit(&dlg);
   edit->setFont(QFont(QStringLiteral("monospace"), 10));
@@ -3086,6 +3340,182 @@ void MainWindow::editGitignore() {
   }
 }
 
+void MainWindow::editGitattributes() {
+  if (m_currentPath.isEmpty()) {
+    QMessageBox::warning(this, tr("No repository"),
+                         tr("Open a repository first."));
+    return;
+  }
+
+  const QString gitattributesPath =
+      m_currentPath + QStringLiteral("/.gitattributes");
+
+  QDialog dlg(this);
+  dlg.setWindowTitle(tr("Edit .gitattributes"));
+  dlg.setMinimumSize(500, 400);
+  dlg.resize(700, 500);
+  auto *layout = new QVBoxLayout(&dlg);
+  auto *edit = new QTextEdit(&dlg);
+  edit->setFont(QFont(QStringLiteral("monospace"), 10));
+  layout->addWidget(edit);
+
+  QString content;
+  QFile file(gitattributesPath);
+  if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    content = QString::fromUtf8(file.readAll());
+    file.close();
+  }
+  edit->setPlainText(content);
+
+  auto *buttons = new QDialogButtonBox(
+      QDialogButtonBox::Save | QDialogButtonBox::Cancel, &dlg);
+  layout->addWidget(buttons);
+  connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+  if (dlg.exec() == QDialog::Accepted) {
+    QFile out(gitattributesPath);
+    if (out.open(QIODevice::WriteOnly | QIODevice::Text)) {
+      out.write(edit->toPlainText().toUtf8());
+      out.close();
+      loadWorkingTree();
+    } else {
+      QMessageBox::warning(this, tr("Error"),
+                           tr("Could not write .gitattributes."));
+    }
+  }
+}
+
+void MainWindow::showCommitHooksAndTemplates() {
+  if (m_currentPath.isEmpty()) {
+    QMessageBox::warning(this, tr("No repository"),
+                         tr("Open a repository first."));
+    return;
+  }
+
+  QDialog dlg(this);
+  dlg.setWindowTitle(tr("Commit hooks and templates"));
+  dlg.setMinimumSize(700, 500);
+  dlg.resize(800, 600);
+  auto *mainLayout = new QVBoxLayout(&dlg);
+  auto *tabs = new QTabWidget(&dlg);
+  mainLayout->addWidget(tabs);
+
+  auto *templateTab = new QWidget(tabs);
+  auto *templateLayout = new QVBoxLayout(templateTab);
+  auto *templatePathLayout = new QHBoxLayout();
+  auto *templatePath = new QLineEdit(templateTab);
+  auto *browseButton = new QPushButton(tr("Browse..."), templateTab);
+  templatePathLayout->addWidget(templatePath);
+  templatePathLayout->addWidget(browseButton);
+  templateLayout->addLayout(templatePathLayout);
+  auto *templateEdit = new QTextEdit(templateTab);
+  templateEdit->setFont(QFont(QStringLiteral("monospace"), 10));
+  templateLayout->addWidget(templateEdit);
+  tabs->addTab(templateTab, tr("Commit template"));
+
+  auto *hooksTab = new QWidget(tabs);
+  auto *hooksLayout = new QHBoxLayout(hooksTab);
+  auto *hooksList = new QListWidget(hooksTab);
+  auto *hookEdit = new QTextEdit(hooksTab);
+  hookEdit->setFont(QFont(QStringLiteral("monospace"), 10));
+  auto *saveHookButton = new QPushButton(tr("Save hook"), hooksTab);
+  auto *hookEditLayout = new QVBoxLayout();
+  hookEditLayout->addWidget(hookEdit);
+  hookEditLayout->addWidget(saveHookButton);
+  hooksLayout->addWidget(hooksList, 1);
+  hooksLayout->addLayout(hookEditLayout, 3);
+  tabs->addTab(hooksTab, tr("Hooks"));
+
+  auto *buttons = new QDialogButtonBox(
+      QDialogButtonBox::Save | QDialogButtonBox::Cancel, &dlg);
+  mainLayout->addWidget(buttons);
+  connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+  auto loadTemplate = [&](const QString &path) {
+    templatePath->setText(path);
+    QFile f(path);
+    if (f.open(QIODevice::ReadOnly | QIODevice::Text))
+      templateEdit->setPlainText(QString::fromUtf8(f.readAll()));
+    else
+      templateEdit->clear();
+  };
+
+  const QString configuredTemplate =
+      m_gitExecutor->run(m_currentPath, {"config", "commit.template"}).value(0);
+  if (!configuredTemplate.isEmpty())
+    loadTemplate(configuredTemplate);
+  else
+    loadTemplate(m_currentPath + QStringLiteral("/.gitmessage"));
+
+  const QString hooksPath = m_currentPath + QStringLiteral("/.git/hooks");
+  QDir hooksDir(hooksPath);
+  for (const QString &entry :
+       hooksDir.entryList(QDir::Files | QDir::NoDotAndDotDot))
+    hooksList->addItem(entry);
+
+  auto loadHook = [&]() {
+    const QString fileName =
+        hooksList->currentItem() ? hooksList->currentItem()->text() : QString();
+    if (fileName.isEmpty()) {
+      hookEdit->clear();
+      return;
+    }
+    QFile f(hooksDir.absoluteFilePath(fileName));
+    if (f.open(QIODevice::ReadOnly | QIODevice::Text))
+      hookEdit->setPlainText(QString::fromUtf8(f.readAll()));
+    else
+      hookEdit->clear();
+  };
+
+  connect(hooksList, &QListWidget::currentTextChanged, this,
+          [&](const QString &) { loadHook(); });
+
+  connect(browseButton, &QPushButton::clicked, this, [&]() {
+    const QString file = QFileDialog::getOpenFileName(
+        this, tr("Select commit template"), m_currentPath);
+    if (!file.isEmpty())
+      loadTemplate(file);
+  });
+
+  connect(saveHookButton, &QPushButton::clicked, this, [&]() {
+    const QString fileName =
+        hooksList->currentItem() ? hooksList->currentItem()->text() : QString();
+    if (fileName.isEmpty())
+      return;
+    QFile f(hooksDir.absoluteFilePath(fileName));
+    if (f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+      f.write(hookEdit->toPlainText().toUtf8());
+      f.close();
+      statusBar()->showMessage(tr("Hook %1 saved").arg(fileName));
+    } else {
+      QMessageBox::warning(this, tr("Error"),
+                           tr("Could not write hook %1.").arg(fileName));
+    }
+  });
+
+  if (dlg.exec() == QDialog::Accepted) {
+    const QString templatePathText = templatePath->text().trimmed();
+    if (templatePathText.isEmpty()) {
+      m_gitExecutor->exec(m_currentPath,
+                          {"config", "--unset", "commit.template"});
+      return;
+    }
+
+    QFile f(templatePathText);
+    if (f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+      f.write(templateEdit->toPlainText().toUtf8());
+      f.close();
+      m_gitExecutor->exec(m_currentPath,
+                          {"config", "commit.template", templatePathText});
+    } else {
+      QMessageBox::warning(this, tr("Error"),
+                           tr("Could not write commit template."));
+    }
+  }
+}
+
 void MainWindow::showSubmodulesContextMenu(const QPoint &pos) {
   QTreeWidgetItem *item = m_repoPanel->itemAt(pos);
   if (!item || !m_submodulesItem)
@@ -3095,9 +3525,9 @@ void MainWindow::showSubmodulesContextMenu(const QPoint &pos) {
   QAction *selected = nullptr;
 
   if (item == m_submodulesItem) {
-    auto *initAllAction = menu.addAction(tr("Init all"));
-    auto *updateAllAction = menu.addAction(tr("Update all"));
-    auto *addAction = menu.addAction(tr("Add..."));
+    auto *initAllAction = menu.addAction(tr("&Init all"));
+    auto *updateAllAction = menu.addAction(tr("&Update all"));
+    auto *addAction = menu.addAction(tr("&Add..."));
     selected = menu.exec(m_repoPanel->viewport()->mapToGlobal(pos));
     if (!selected)
       return;
@@ -3119,10 +3549,10 @@ void MainWindow::showSubmodulesContextMenu(const QPoint &pos) {
   if (subPath.isEmpty())
     return;
 
-  auto *openAction = menu.addAction(tr("Open"));
-  auto *initAction = menu.addAction(tr("Init"));
-  auto *updateAction = menu.addAction(tr("Update"));
-  auto *removeAction = menu.addAction(tr("Remove"));
+  auto *openAction = menu.addAction(tr("&Open"));
+  auto *initAction = menu.addAction(tr("&Init"));
+  auto *updateAction = menu.addAction(tr("&Update"));
+  auto *removeAction = menu.addAction(tr("&Remove"));
   selected = menu.exec(m_repoPanel->viewport()->mapToGlobal(pos));
   if (!selected)
     return;
@@ -4073,4 +4503,55 @@ void MainWindow::showReflog() {
 
   dlg.setFixedSize(900, 500);
   dlg.exec();
+}
+
+void MainWindow::applyPatch() {
+  if (m_currentPath.isEmpty()) {
+    QMessageBox::warning(this, tr("No repository"),
+                         tr("Open a repository first."));
+    return;
+  }
+
+  const QString fileName =
+      QFileDialog::getOpenFileName(this, tr("Apply patch"), QDir::homePath(),
+                                   tr("Patches (*.patch *.diff);;"
+                                      "All files (*.*)"));
+  if (fileName.isEmpty())
+    return;
+
+  if (m_gitExecutor->exec(m_currentPath, {"apply", fileName})) {
+    loadRepository(m_currentPath);
+    statusBar()->showMessage(tr("Patch applied"));
+  } else {
+    statusBar()->showMessage(tr("Failed to apply patch"));
+  }
+}
+
+void MainWindow::createPatchFromCommit(const QString &sha) {
+  if (m_currentPath.isEmpty() || sha.isEmpty())
+    return;
+
+  const QString defaultName = QDir::homePath() + QStringLiteral("/") +
+                              sha.left(7) + QStringLiteral(".patch");
+  const QString fileName = QFileDialog::getSaveFileName(
+      this, tr("Save patch"), defaultName, tr("Patch files (*.patch)"));
+  if (fileName.isEmpty())
+    return;
+
+  const QStringList patchLines = m_gitExecutor->run(
+      m_currentPath, {"format-patch", "-1", sha, "--stdout"});
+  if (patchLines.isEmpty()) {
+    statusBar()->showMessage(tr("Failed to create patch"));
+    return;
+  }
+
+  QFile out(fileName);
+  if (out.open(QIODevice::WriteOnly | QIODevice::Text)) {
+    out.write(patchLines.join(QLatin1Char('\n')).toUtf8());
+    out.write("\n");
+    out.close();
+    statusBar()->showMessage(tr("Patch saved to %1").arg(fileName));
+  } else {
+    QMessageBox::warning(this, tr("Error"), tr("Could not write patch file."));
+  }
 }

@@ -10,10 +10,13 @@
 #include "widgets/FileTreeWidget.h"
 
 #include <QMainWindow>
-#include <QSet>
+#include <QSettings>
+#include <QShortcut>
+#include <QStackedWidget>
 #include <QStringList>
 
 class QPoint;
+class QDockWidget;
 class QIcon;
 class QMenu;
 class QFileSystemWatcher;
@@ -66,7 +69,11 @@ private slots:
   void onAmendToggled(int state);
   void showPreferences();
   void editGitignore();
+  void editGitattributes();
+  void showCommitHooksAndTemplates();
   void showRepositorySettings();
+  void applyPatch();
+  void createPatchFromCommit(const QString &sha);
   void initSubmodules();
   void updateSubmodules();
   void addSubmodule();
@@ -122,6 +129,7 @@ private:
   DiffPresenter *m_diffPresenter = nullptr;
   CommitModel *m_commitModel = nullptr;
   WorkingTreeModel *m_workingTreeModel = nullptr;
+  QStackedWidget *m_centralStack = nullptr;
   QTreeWidget *m_repoPanel = nullptr;
   QTreeWidgetItem *m_localBranchesItem = nullptr;
   QTreeWidgetItem *m_remoteBranchesItem = nullptr;
@@ -163,6 +171,9 @@ private:
   QDockWidget *m_repoDock = nullptr;
   QDockWidget *m_workTreeDock = nullptr;
   QDockWidget *m_grepDock = nullptr;
+  QDockWidget *m_commandLogDock = nullptr;
+  QTextEdit *m_commandLogEdit = nullptr;
+  QDockWidget *m_diffDock = nullptr;
   QLineEdit *m_grepEdit = nullptr;
   QTreeWidget *m_grepResults = nullptr;
 };
