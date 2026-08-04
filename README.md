@@ -7,7 +7,8 @@ A Qt-based Git client.
 GitClientQt is a lightweight desktop Git client built with Qt. It provides a
 three-pane interface that lets you browse repository branches, tags and stashes,
 inspect the working tree, view commit history with unpushed/unpulled markers,
-and compare file diffs without leaving the application.
+compare file diffs, and inspect per-line blame information without leaving the
+application.
 
 The client is designed to stay out of your way while exposing the most common
 Git operations: opening, cloning and initializing repositories, staging and
@@ -67,19 +68,56 @@ No additional runtime files are required besides the Qt libraries and a working
 10. Reload the repository with `F5`.
 11. Close the repository with `File → Close Repository` to return to the welcome
     state.
+12. Right-click a file and choose `Blame` to open the per-line blame view. The
+    source column expands to use the available window width.
+13. The diff dock hides automatically when no diff is selected and reappears
+    when you click a file that has changes.
 
-## Keyboard Shortcuts
+## Features
 
-| Shortcut | Action |
-| --- | --- |
-| `Ctrl+O` | Open repository |
-| `Ctrl+Shift+N` | Clone repository |
-| `Ctrl+N` | Initialize repository |
-| `Ctrl+W` | Close repository |
-| `Ctrl+Q` | Quit |
-| `Ctrl+,` | Preferences |
-| `Ctrl+Shift+P` | Push |
-| `Ctrl+Shift+L` | Pull |
-| `Ctrl+Shift+F` | Fetch all |
-| `Ctrl+Return` | Commit |
-| `F5` | Reload repository |
+- **Repository management**: open, clone, and initialize repositories; reopen recent repositories from the `File` menu.
+- **Commit history**: browse the commit graph with author, date, message and SHA information. Unpushed and unpulled commits are highlighted.
+- **Working tree panel**: stage and unstage files, view modified/untracked files, and stash changes from the right dock.
+- **Repository explorer**: inspect branches, tags, stashes and submodules in the left dock.
+- **Diff view**: compare working-tree or committed file changes. The diff dock is hidden automatically when nothing is selected and reappears when a file with changes is clicked.
+- **Blame view**: right-click any file and choose `Blame` to see per-line commit metadata, with a resizable source column that expands with the window.
+- **Pull mode support**: choose between a normal pull, rebase, or merge pull strategy and fetch all branches from the pull dropdown.
+- **Push targeting**: push the current branch to its configured remote; choose normal, force or `force-with-lease` push modes.
+- **Customizable keyboard shortcuts**: edit shortcuts through `Edit → Preferences` in the Shortcuts tab.
+- **Auto-reload**: the repository view can be reloaded manually or watched for changes.
+
+## Configuration / Settings
+
+Settings are stored in `QSettings` and can be changed through `Edit → Preferences`:
+
+- **General**: pick the pull mode (`Merge`, `Rebase`, or `Plain Pull`).
+- **Shortcuts**: edit the keyboard shortcuts that are used for open, clone, commit, push, pull, fetch and other actions.
+- **Window state**: the main window geometry and dock layout are saved and restored.
+
+## Troubleshooting
+
+### Push fails with "Invalid username or token"
+
+GitClientQt calls the `git` command-line tool, so authentication depends on your Git setup. For GitHub:
+
+1. Create a Personal Access Token with `repo` and `read:org` scopes.
+2. Update the remote URL to include the token:
+   ```bash
+   git remote set-url origin https://<user>:<token>@github.com/<user>/<repo>.git
+   ```
+3. Alternatively, use SSH:
+   ```bash
+   git remote set-url origin git@github.com:<user>/<repo>.git
+   ```
+
+### Blame window does not resize
+
+The blame view uses a `QTableWidget` and the source column is set to stretch. If the source does not expand on resize, make sure the dialog window is actually being resized and not maximized inside a constrained layout.
+
+### Diff dock is not visible
+
+The diff dock is hidden automatically when no file is selected. Click a file in the working tree or commit file list to show it.
+
+## License
+
+This project is provided as-is. Add your preferred license text here.
