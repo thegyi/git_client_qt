@@ -65,3 +65,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt${QT_VERSION_MAJOR}::Network
     Qt${QT_VERSION_MAJOR}::Concurrent
 )
+
+enable_testing()
+add_subdirectory(tests)

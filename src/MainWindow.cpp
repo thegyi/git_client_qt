@@ -1711,6 +1711,16 @@ void MainWindow::loadRepository(const QString &path) {
     m_remoteBranchName =
         m_gitExecutor->run(path, {"rev-parse", "--abbrev-ref", "@{u}"})
             .value(0);
+    if (m_remoteBranchName.isEmpty()) {
+      const QStringList candidates = {QStringLiteral("origin/") + currentBranch,
+                                      QStringLiteral("origin/HEAD")};
+      for (const QString &c : candidates) {
+        if (!m_gitExecutor->run(path, {"rev-parse", c}).isEmpty()) {
+          m_remoteBranchName = c;
+          break;
+        }
+      }
+    }
     m_remoteHeadSha =
         !m_remoteBranchName.isEmpty()
             ? m_gitExecutor->run(path, {"rev-parse", m_remoteBranchName})
