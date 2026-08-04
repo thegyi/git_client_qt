@@ -1737,6 +1737,10 @@ void MainWindow::loadRepository(const QString &path) {
         m_unpulledShas.insert(sha);
     }
 
+    qDebug() << "loadRepository remote:" << m_remoteBranchName
+             << m_remoteHeadSha << "unpushed:" << m_unpushedShas
+             << "unpulled:" << m_unpulledShas;
+
     if (m_branchLabel) {
       QString branchText = currentBranch;
       if (!m_remoteBranchName.isEmpty()) {
