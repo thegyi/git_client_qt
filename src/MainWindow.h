@@ -98,8 +98,8 @@ private:
   void restoreSettings();
   void savePullMode();
   void loadWorkingTree();
-  void saveDockAndColumnState();
-  void restoreDockAndColumnState();
+  void saveDockAndColumnState(bool includeGeometry = true);
+  void restoreDockAndColumnState(bool includeGeometry = true);
   void onGrepRequested();
   void diffWithCommit(const QString &fromSha);
   void onGrepResultActivated(QTreeWidgetItem *item, int column);

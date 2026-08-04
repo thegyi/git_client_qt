@@ -860,6 +860,8 @@ MainWindow::MainWindow(QWidget *parent)
   });
 
   connect(ui->actionClose, &QAction::triggered, this, [this] {
+    if (!m_currentPath.isEmpty())
+      saveDockAndColumnState(false);
     m_currentPath.clear();
     m_repoPanel->clear();
     m_localBranchesItem = nullptr;
@@ -982,50 +984,67 @@ void MainWindow::savePullMode() {
   settings.setValue("pullMode", mode);
 }
 
-void MainWindow::saveDockAndColumnState() {
+void MainWindow::saveDockAndColumnState(bool includeGeometry) {
   QSettings settings("GitClientQt", "GitClientQt");
-  settings.setValue("mainWindow/geometry", saveGeometry());
-  settings.setValue("mainWindow/state", saveState(0));
+  if (includeGeometry)
+    settings.setValue("mainWindow/geometry", saveGeometry());
+
+  const QString repoKey = m_currentPath.isEmpty()
+                              ? QStringLiteral("default")
+                              : QString::number(qHash(m_currentPath), 16);
+  const QString base =
+      QLatin1String("dockLayouts/") + repoKey + QLatin1Char('/');
+  settings.setValue(base + QLatin1String("state"), saveState(0));
 
   if (m_commitTable)
-    settings.setValue("headers/commitTable",
+    settings.setValue(base + QLatin1String("headers/commitTable"),
                       m_commitTable->horizontalHeader()->saveState());
   if (m_unstagedTree)
-    settings.setValue("headers/unstagedTree",
+    settings.setValue(base + QLatin1String("headers/unstagedTree"),
                       m_unstagedTree->header()->saveState());
   if (m_stagedTree)
-    settings.setValue("headers/stagedTree",
+    settings.setValue(base + QLatin1String("headers/stagedTree"),
                       m_stagedTree->header()->saveState());
   if (m_commitFilesTree)
-    settings.setValue("headers/commitFilesTree",
+    settings.setValue(base + QLatin1String("headers/commitFilesTree"),
                       m_commitFilesTree->header()->saveState());
   if (m_grepResults)
-    settings.setValue("headers/grepResults",
+    settings.setValue(base + QLatin1String("headers/grepResults"),
                       m_grepResults->header()->saveState());
 }
 
-void MainWindow::restoreDockAndColumnState() {
+void MainWindow::restoreDockAndColumnState(bool includeGeometry) {
   QSettings settings("GitClientQt", "GitClientQt");
-  const QByteArray geometry =
-      settings.value("mainWindow/geometry").toByteArray();
-  const QByteArray state = settings.value("mainWindow/state").toByteArray();
-  if (!geometry.isEmpty())
-    restoreGeometry(geometry);
 
-  bool onScreen = false;
-  const QRect windowRect = QRect(pos(), size());
-  for (QScreen *screen : QGuiApplication::screens()) {
-    if (screen->availableGeometry().intersects(windowRect)) {
-      onScreen = true;
-      break;
+  if (includeGeometry) {
+    const QByteArray geometry =
+        settings.value("mainWindow/geometry").toByteArray();
+    if (!geometry.isEmpty())
+      restoreGeometry(geometry);
+
+    bool onScreen = false;
+    const QRect windowRect = QRect(pos(), size());
+    for (QScreen *screen : QGuiApplication::screens()) {
+      if (screen->availableGeometry().intersects(windowRect)) {
+        onScreen = true;
+        break;
+      }
+    }
+    if (!onScreen) {
+      const QRect screenRect =
+          QGuiApplication::primaryScreen()->availableGeometry();
+      setGeometry(screenRect.adjusted(100, 100, -100, -100));
     }
   }
-  if (!onScreen) {
-    const QRect screenRect =
-        QGuiApplication::primaryScreen()->availableGeometry();
-    setGeometry(screenRect.adjusted(100, 100, -100, -100));
-  }
 
+  const QString repoKey = m_currentPath.isEmpty()
+                              ? QStringLiteral("default")
+                              : QString::number(qHash(m_currentPath), 16);
+  const QString base =
+      QLatin1String("dockLayouts/") + repoKey + QLatin1Char('/');
+
+  const QByteArray state =
+      settings.value(base + QLatin1String("state")).toByteArray();
   if (!state.isEmpty())
     restoreState(state, 0);
 
@@ -1044,14 +1063,15 @@ void MainWindow::restoreDockAndColumnState() {
     m_commandLogDock->setVisible(false);
 
   const QHash<QTreeWidget *, QString> trees = {
-      {m_unstagedTree, QStringLiteral("headers/unstagedTree")},
-      {m_stagedTree, QStringLiteral("headers/stagedTree")},
-      {m_commitFilesTree, QStringLiteral("headers/commitFilesTree")},
-      {m_grepResults, QStringLiteral("headers/grepResults")}};
+      {m_unstagedTree, QLatin1String("headers/unstagedTree")},
+      {m_stagedTree, QLatin1String("headers/stagedTree")},
+      {m_commitFilesTree, QLatin1String("headers/commitFilesTree")},
+      {m_grepResults, QLatin1String("headers/grepResults")}};
   for (auto it = trees.cbegin(); it != trees.cend(); ++it) {
     QTreeWidget *tree = it.key();
     if (tree) {
-      const QByteArray headerState = settings.value(it.value()).toByteArray();
+      const QByteArray headerState =
+          settings.value(base + it.value()).toByteArray();
       if (!headerState.isEmpty())
         tree->header()->restoreState(headerState);
     }
@@ -1059,7 +1079,8 @@ void MainWindow::restoreDockAndColumnState() {
 
   if (m_commitTable) {
     const QByteArray headerState =
-        settings.value(QStringLiteral("headers/commitTable")).toByteArray();
+        settings.value(base + QLatin1String("headers/commitTable"))
+            .toByteArray();
     if (!headerState.isEmpty())
       m_commitTable->horizontalHeader()->restoreState(headerState);
   }
@@ -1392,6 +1413,10 @@ bool MainWindow::repositoryStateChanged() const {
 void MainWindow::loadRepository(const QString &path) {
   if (path.isEmpty())
     return;
+
+  if (!m_currentPath.isEmpty())
+    saveDockAndColumnState(false);
+
   m_gitRepository->setPath(path);
   if (!m_gitRepository->isValid()) {
     statusBar()->showMessage(tr("Not a git repository: %1").arg(path));
@@ -1407,6 +1432,8 @@ void MainWindow::loadRepository(const QString &path) {
   }
   m_currentPath = repoRoot;
   m_gitRepository->setPath(m_currentPath);
+  if (!isInitialLoad)
+    restoreDockAndColumnState(false);
   if (m_centralStack)
     m_centralStack->setCurrentIndex(1);
   if (m_watcher) {
