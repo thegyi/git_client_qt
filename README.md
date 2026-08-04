@@ -118,6 +118,3 @@ The blame view uses a `QTableWidget` and the source column is set to stretch. If
 
 The diff dock is hidden automatically when no file is selected. Click a file in the working tree or commit file list to show it.
 
-## License
-
-This project is provided as-is. Add your preferred license text here.
