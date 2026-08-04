@@ -432,14 +432,64 @@ MainWindow::MainWindow(QWidget *parent)
     }
     args << QStringLiteral("-u") << pushRemote << currentBranch;
 
+    QProgressDialog progress(tr("Pushing to remote..."), tr("Cancel"), 0, 0,
+                             this);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(0);
+
+    QProcess p;
+    p.setWorkingDirectory(m_currentPath);
+
     QString output;
-    if (m_gitExecutor->exec(m_currentPath, args, &output)) {
+    bool canceled = false;
+    connect(&p, &QProcess::readyReadStandardOutput, this, [&]() {
+      output += QString::fromLocal8Bit(p.readAllStandardOutput());
+    });
+    connect(&p, &QProcess::readyReadStandardError, this, [&]() {
+      output += QString::fromLocal8Bit(p.readAllStandardError());
+    });
+    connect(&p, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            &progress, &QProgressDialog::close);
+    connect(&p, &QProcess::errorOccurred, &progress, &QProgressDialog::close);
+    connect(&progress, &QProgressDialog::canceled, &p, &QProcess::kill);
+    connect(&progress, &QProgressDialog::canceled, this,
+            [&]() { canceled = true; });
+
+    p.start(QStringLiteral("git"), args);
+    if (!p.waitForStarted(5000)) {
+      QMessageBox::warning(this, tr("Push failed"),
+                           tr("Could not start git process"));
+      return;
+    }
+
+    progress.exec();
+
+    if (canceled) {
+      statusBar()->showMessage(tr("Push canceled"));
+      return;
+    }
+
+    if (p.exitCode() == 0) {
       if (!remote.isEmpty())
         m_gitExecutor->exec(m_currentPath, {QStringLiteral("fetch"), remote});
       loadRepository(m_currentPath);
-      statusBar()->showMessage(m_pushButton->text());
+      statusBar()->showMessage(tr("Push finished"));
+      if (!output.isEmpty()) {
+        QMessageBox msg(this);
+        msg.setWindowTitle(tr("Push output"));
+        msg.setText(tr("Push completed successfully."));
+        msg.setDetailedText(output);
+        msg.setStandardButtons(QMessageBox::Ok);
+        msg.exec();
+      }
     } else {
-      QMessageBox::warning(this, tr("Push failed"), output);
+      QMessageBox msg(this);
+      msg.setWindowTitle(tr("Push failed"));
+      msg.setText(tr("Git push failed."));
+      msg.setDetailedText(output);
+      msg.setIcon(QMessageBox::Warning);
+      msg.setStandardButtons(QMessageBox::Ok);
+      msg.exec();
     }
   });
 
