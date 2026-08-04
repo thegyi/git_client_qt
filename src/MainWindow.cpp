@@ -665,6 +665,17 @@ MainWindow::MainWindow(QWidget *parent)
           &MainWindow::showUnstagedContextMenu);
   connect(m_unstagedTree, &QTreeWidget::itemClicked, this,
           &MainWindow::onFileClicked);
+  connect(
+      m_unstagedTree, &FileTreeWidget::fileDropped, this,
+      [this](const QString &path) {
+        if (m_currentPath.isEmpty())
+          return;
+        if (m_gitExecutor->exec(m_currentPath, {QStringLiteral("reset"),
+                                                QStringLiteral("HEAD"),
+                                                QStringLiteral("--"), path})) {
+          loadWorkingTree();
+        }
+      });
 
   unstagedLayout->addWidget(m_unstagedTree);
   rightLayout->addWidget(unstagedGroup);
@@ -676,6 +687,15 @@ MainWindow::MainWindow(QWidget *parent)
           &MainWindow::showStagedContextMenu);
   connect(m_stagedTree, &QTreeWidget::itemClicked, this,
           &MainWindow::onFileClicked);
+  connect(
+      m_stagedTree, &FileTreeWidget::fileDropped, this,
+      [this](const QString &path) {
+        if (m_currentPath.isEmpty())
+          return;
+        if (m_gitExecutor->exec(m_currentPath, {QStringLiteral("add"), path})) {
+          loadWorkingTree();
+        }
+      });
 
   stagedLayout->addWidget(m_stagedTree);
   rightLayout->addWidget(stagedGroup);

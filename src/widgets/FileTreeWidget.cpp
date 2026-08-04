@@ -1,7 +1,13 @@
 #include "FileTreeWidget.h"
 
 #include <QApplication>
+#include <QDrag>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
 #include <QIcon>
+#include <QMimeData>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPen>
 #include <QPixmap>
@@ -16,6 +22,11 @@ FileTreeWidget::FileTreeWidget(const QString &headerLabel, QWidget *parent)
     setHeaderLabels(QStringList{headerLabel});
   setRootIsDecorated(true);
   setContextMenuPolicy(Qt::CustomContextMenu);
+  setSelectionMode(QAbstractItemView::SingleSelection);
+  setDragEnabled(true);
+  setAcceptDrops(true);
+  setDragDropMode(QAbstractItemView::DragDrop);
+  setDefaultDropAction(Qt::MoveAction);
 }
 
 QString FileTreeWidget::itemPath(QTreeWidgetItem *item) const {
@@ -103,4 +114,57 @@ QIcon FileTreeWidget::statusIcon(const QString &status) {
   }
 
   return QIcon(pixmap);
+}
+
+void FileTreeWidget::startDrag(Qt::DropActions) {
+  QTreeWidgetItem *item = currentItem();
+  if (!item)
+    return;
+
+  const QString path = itemPath(item);
+  if (path.isEmpty())
+    return;
+
+  auto *mimeData = new QMimeData();
+  mimeData->setData(QStringLiteral("application/x-gitclientqt-filepath"),
+                    path.toUtf8());
+
+  auto *drag = new QDrag(this);
+  drag->setMimeData(mimeData);
+  drag->exec(Qt::MoveAction);
+}
+
+void FileTreeWidget::dragEnterEvent(QDragEnterEvent *event) {
+  if (event->mimeData()->hasFormat(
+          QStringLiteral("application/x-gitclientqt-filepath"))) {
+    event->acceptProposedAction();
+  } else {
+    QTreeWidget::dragEnterEvent(event);
+  }
+}
+
+void FileTreeWidget::dragMoveEvent(QDragMoveEvent *event) {
+  if (event->mimeData()->hasFormat(
+          QStringLiteral("application/x-gitclientqt-filepath"))) {
+    event->acceptProposedAction();
+  } else {
+    QTreeWidget::dragMoveEvent(event);
+  }
+}
+
+void FileTreeWidget::dropEvent(QDropEvent *event) {
+  const QByteArray data = event->mimeData()->data(
+      QStringLiteral("application/x-gitclientqt-filepath"));
+  if (data.isEmpty() || event->source() == this) {
+    event->ignore();
+    return;
+  }
+
+  const QString path = QString::fromUtf8(data);
+  if (!path.isEmpty()) {
+    event->acceptProposedAction();
+    emit fileDropped(path);
+  } else {
+    event->ignore();
+  }
 }

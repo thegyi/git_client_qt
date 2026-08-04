@@ -14,6 +14,15 @@ public:
   void addFile(const QString &filePath, const QString &status = QString());
 
   static QIcon statusIcon(const QString &status);
+
+signals:
+  void fileDropped(const QString &path);
+
+protected:
+  void startDrag(Qt::DropActions supportedActions) override;
+  void dragEnterEvent(QDragEnterEvent *event) override;
+  void dragMoveEvent(QDragMoveEvent *event) override;
+  void dropEvent(QDropEvent *event) override;
 };
 
 #endif // FILETREEWIDGET_H
