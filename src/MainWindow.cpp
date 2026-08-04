@@ -177,6 +177,20 @@ MainWindow::MainWindow(QWidget *parent)
   reflogAction->setShortcut(QKeySequence(QLatin1String("Ctrl+Shift+R")));
   connect(reflogAction, &QAction::triggered, this, &MainWindow::showReflog);
 
+  auto *diffWithRemoteAction =
+      repositoryMenu->addAction(tr("Diff local vs remote"));
+  diffWithRemoteAction->setStatusTip(
+      tr("Show diff between local and remote HEAD"));
+  connect(diffWithRemoteAction, &QAction::triggered, this,
+          &MainWindow::diffWithRemote);
+
+  auto *undoLastCommitAction =
+      repositoryMenu->addAction(tr("Undo last commit"));
+  undoLastCommitAction->setStatusTip(
+      tr("Soft-reset the most recent commit and keep changes staged"));
+  connect(undoLastCommitAction, &QAction::triggered, this,
+          &MainWindow::undoLastCommit);
+
   auto *resolveConflictsAction =
       repositoryMenu->addAction(tr("Resolve conflicts..."));
   resolveConflictsAction->setStatusTip(tr("Resolve merge conflicts"));
@@ -295,20 +309,8 @@ MainWindow::MainWindow(QWidget *parent)
   remoteBar->addWidget(m_pushButton);
   remoteBar->addWidget(m_undoButton);
   remoteBar->addWidget(m_pullButton);
-  connect(m_undoButton, &QPushButton::clicked, this, [this] {
-    if (m_currentPath.isEmpty())
-      return;
-    if (QMessageBox::question(this, tr("Undo last commit"),
-                              tr("Undo the last commit and keep changes "
-                                 "staged?")) == QMessageBox::Yes) {
-      if (m_gitExecutor->exec(m_currentPath, {"reset", "--soft", "HEAD~1"})) {
-        loadRepository(m_currentPath);
-        statusBar()->showMessage(tr("Undone last commit"));
-      } else {
-        statusBar()->showMessage(tr("Failed to undo last commit"));
-      }
-    }
-  });
+  connect(m_undoButton, &QPushButton::clicked, this,
+          &MainWindow::undoLastCommit);
 
   m_pullButton->setText(tr("Pull"));
 
@@ -1730,6 +1732,10 @@ void MainWindow::loadRepository(const QString &path) {
             : QString();
     m_unpushedShas.clear();
     m_unpulledShas.clear();
+    QSet<QString> localShas;
+    QSet<QString> remoteShas;
+    QSet<QString> branchSet;
+    QSet<QString> tagSet;
     if (!m_remoteBranchName.isEmpty()) {
       for (const QString &sha : m_gitExecutor->run(
                path, {"log", "--format=%H", m_remoteBranchName + "..HEAD"}))
@@ -1737,7 +1743,22 @@ void MainWindow::loadRepository(const QString &path) {
       for (const QString &sha : m_gitExecutor->run(
                path, {"log", "--format=%H", "HEAD.." + m_remoteBranchName}))
         m_unpulledShas.insert(sha);
+      for (const QString &sha :
+           m_gitExecutor->run(path, {"log", "--format=%H", m_remoteHeadSha}))
+        remoteShas.insert(sha);
     }
+    for (const QString &sha :
+         m_gitExecutor->run(path, {"log", "--format=%H", "HEAD"}))
+      localShas.insert(sha);
+    for (const QString &ref :
+         m_gitExecutor->run(path, {"for-each-ref", "--format=%(refname:short)",
+                                   QStringLiteral("refs/heads/"),
+                                   QStringLiteral("refs/remotes/")}))
+      branchSet.insert(ref);
+    for (const QString &ref :
+         m_gitExecutor->run(path, {"for-each-ref", "--format=%(refname:short)",
+                                   QStringLiteral("refs/tags/")}))
+      tagSet.insert(ref);
 
     qDebug() << "loadRepository remote:" << m_remoteBranchName
              << m_remoteHeadSha << "unpushed:" << m_unpushedShas
@@ -1834,7 +1855,14 @@ void MainWindow::loadRepository(const QString &path) {
         authorItem->setBackground(bgBrush);
       m_commitTable->setItem(row, 4, authorItem);
 
-      auto *branchItem = new QTableWidgetItem(c.branch);
+      QString branchText;
+      if (branchSet.contains(c.branch) && !tagSet.contains(c.branch))
+        branchText = c.branch;
+      else if (localShas.contains(c.fullSha))
+        branchText = currentBranch;
+      else if (!m_remoteHeadSha.isEmpty() && remoteShas.contains(c.fullSha))
+        branchText = m_remoteBranchName;
+      auto *branchItem = new QTableWidgetItem(branchText);
       branchItem->setToolTip(tip);
       if (bgBrush != QBrush())
         branchItem->setBackground(bgBrush);
@@ -2893,6 +2921,11 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
   auto *fixupAction = menu.addAction(tr("Fi&xup into previous"));
   auto *resetAction = menu.addAction(tr("R&eset to this commit"));
   auto *savePatchAction = menu.addAction(tr("Sa&ve as patch..."));
+
+  auto *undoLastCommitAction =
+      sha == m_localHeadSha ? menu.addAction(tr("&Undo last commit (soft)"))
+                            : nullptr;
+
   QAction *selected = menu.exec(m_commitTable->viewport()->mapToGlobal(pos));
 
   if (selected == checkoutAction) {
@@ -3018,6 +3051,11 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
 
   if (selected == savePatchAction) {
     createPatchFromCommit(sha);
+    return;
+  }
+
+  if (selected == undoLastCommitAction) {
+    undoLastCommit();
     return;
   }
 
@@ -3287,6 +3325,57 @@ void MainWindow::onCommitFileClicked(QTreeWidgetItem *item, int column) {
                              : m_diffPresenter->formatDiff(diff);
     m_diffDock->setVisible(true);
     m_diffView->setHtml(html);
+  }
+}
+
+void MainWindow::diffWithRemote() {
+  if (m_currentPath.isEmpty()) {
+    QMessageBox::warning(this, tr("No repository"),
+                         tr("Open a repository first."));
+    return;
+  }
+
+  if (m_remoteHeadSha.isEmpty()) {
+    QMessageBox::warning(this, tr("No remote"),
+                         tr("No upstream/remote HEAD is set."));
+    return;
+  }
+
+  const QStringList diff = m_gitExecutor->run(
+      m_currentPath,
+      {"diff", m_remoteHeadSha + QLatin1String(".."), m_localHeadSha});
+  if (m_diffView) {
+    if (diff.isEmpty()) {
+      if (m_diffDock)
+        m_diffDock->setVisible(false);
+      m_diffView->showEmpty(tr("No diff"),
+                            tr("Local and remote HEAD are the same."));
+    } else {
+      if (m_diffDock)
+        m_diffDock->setVisible(true);
+      m_diffView->setHtml(m_diffPresenter->formatDiff(diff));
+    }
+  }
+  statusBar()->showMessage(
+      tr("Diff: %1..%2").arg(m_remoteHeadSha.left(7), m_localHeadSha.left(7)));
+}
+
+void MainWindow::undoLastCommit() {
+  if (m_currentPath.isEmpty()) {
+    QMessageBox::warning(this, tr("No repository"),
+                         tr("Open a repository first."));
+    return;
+  }
+
+  if (QMessageBox::question(this, tr("Undo last commit"),
+                            tr("Undo the last commit and keep changes "
+                               "staged?")) == QMessageBox::Yes) {
+    if (m_gitExecutor->exec(m_currentPath, {"reset", "--soft", "HEAD~1"})) {
+      loadRepository(m_currentPath);
+      statusBar()->showMessage(tr("Undone last commit"));
+    } else {
+      statusBar()->showMessage(tr("Failed to undo last commit"));
+    }
   }
 }
 

@@ -65,6 +65,7 @@ private slots:
   void onFileClicked(QTreeWidgetItem *item, int column);
   void onCloneRepository();
   void onInitRepository();
+  void undoLastCommit();
   void onCommitClicked();
   void onAmendToggled(int state);
   void showPreferences();
@@ -104,6 +105,7 @@ private:
   void restoreDockAndColumnState(bool includeGeometry = true);
   void onGrepRequested();
   void diffWithCommit(const QString &fromSha);
+  void diffWithRemote();
   void onGrepResultActivated(QTreeWidgetItem *item, int column);
   void showBlame(const QString &path, const QString &revision = QString());
   void showEmptyDiff();
