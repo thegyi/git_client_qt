@@ -66,5 +66,25 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt${QT_VERSION_MAJOR}::Concurrent
 )
 
+install(TARGETS ${PROJECT_NAME}
+        RUNTIME DESTINATION bin
+        BUNDLE DESTINATION .)
+
+set(CPACK_PACKAGE_NAME "GitClientQt")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_PACKAGE_VENDOR "tamas.hegyi")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Qt-based Git client")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "GitClientQt")
+set(CPACK_PACKAGE_FILE_NAME "GitClientQt-${PROJECT_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_CXX_COMPILER_ID}")
+set(CPACK_GENERATOR "TGZ;ZIP")
+if (UNIX AND NOT APPLE)
+  list(APPEND CPACK_GENERATOR "DEB" "RPM")
+endif()
+if (APPLE)
+  list(APPEND CPACK_GENERATOR "DragNDrop")
+endif()
+
+include(CPack)
+
 enable_testing()
 add_subdirectory(tests)
