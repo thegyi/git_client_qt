@@ -13,6 +13,7 @@
 #include <QActionGroup>
 #include <QApplication>
 #include <QCheckBox>
+#include <QColorDialog>
 #include <QComboBox>
 #include <QDesktopServices>
 #include <QDialogButtonBox>
@@ -24,6 +25,7 @@
 #include <QFont>
 #include <QFormLayout>
 #include <QFrame>
+#include <QGridLayout>
 #include <QGroupBox>
 #include <QGuiApplication>
 #include <QHeaderView>
@@ -35,6 +37,7 @@
 #include <QMap>
 #include <QMenu>
 #include <QMessageBox>
+#include <QPalette>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QScreen>
@@ -42,6 +45,7 @@
 #include <QShortcut>
 #include <QSplitter>
 #include <QStyle>
+#include <QStyleFactory>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QTemporaryDir>
@@ -50,6 +54,7 @@
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
+#include <QVector>
 
 #include <QDateTime>
 #include <QDialog>
@@ -206,13 +211,6 @@ MainWindow::MainWindow(QWidget *parent)
   ui->actionExit->setStatusTip(tr("Exit the application"));
   ui->actionPreferences->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Comma));
   ui->actionPreferences->setStatusTip(tr("Open application preferences"));
-
-  m_darkThemeAction = new QAction(tr("Dark Theme"), this);
-  m_darkThemeAction->setCheckable(true);
-  m_darkThemeAction->setStatusTip(tr("Toggle the dark color theme"));
-  ui->menuEdit->addAction(m_darkThemeAction);
-  connect(m_darkThemeAction, &QAction::toggled, this,
-          &MainWindow::setDarkTheme);
 
   m_branchLabel = new QLabel(this);
   statusBar()->addPermanentWidget(m_branchLabel);
@@ -686,14 +684,10 @@ MainWindow::MainWindow(QWidget *parent)
   auto *messageLayout = new QVBoxLayout(messageGroup);
   m_commitSubject = new QLineEdit(this);
   m_commitSubject->setPlaceholderText(tr("Short summary"));
-  m_commitSubject->setStyleSheet(QStringLiteral(
-      "QLineEdit { color: #000000; background-color: #ffffff; }"));
   messageLayout->addWidget(m_commitSubject);
   m_commitBody = new QTextEdit(this);
   m_commitBody->setPlaceholderText(tr("Long description"));
   m_commitBody->setAcceptRichText(false);
-  m_commitBody->setStyleSheet(QStringLiteral(
-      "QTextEdit { color: #000000; background-color: #ffffff; }"));
   m_commitBody->setMaximumHeight(120);
   messageLayout->addWidget(m_commitBody);
   m_amendCheckBox = new QCheckBox(tr("Amend last commit"), this);
@@ -909,9 +903,6 @@ MainWindow::~MainWindow() {
 
 void MainWindow::restoreSettings() {
   QSettings settings("GitClientQt", "GitClientQt");
-  if (m_darkThemeAction)
-    m_darkThemeAction->setChecked(settings.value("darkTheme", false).toBool());
-
   if (settings.value("reopenLastRepo", true).toBool()) {
     const QString lastRepo = settings.value("lastRepo").toString();
     if (!lastRepo.isEmpty() && m_currentPath.isEmpty())
@@ -1052,52 +1043,6 @@ void MainWindow::restoreDockAndColumnState() {
   }
 }
 
-void MainWindow::setDarkTheme(bool enabled) {
-  QSettings settings("GitClientQt", "GitClientQt");
-  settings.setValue("darkTheme", enabled);
-
-  if (enabled) {
-    QPalette darkPalette;
-    darkPalette.setColor(QPalette::Window, QColor(45, 45, 48));
-    darkPalette.setColor(QPalette::WindowText, Qt::white);
-    darkPalette.setColor(QPalette::Base, QColor(30, 30, 30));
-    darkPalette.setColor(QPalette::AlternateBase, QColor(45, 45, 48));
-    darkPalette.setColor(QPalette::ToolTipBase, QColor(45, 45, 48));
-    darkPalette.setColor(QPalette::ToolTipText, Qt::white);
-    darkPalette.setColor(QPalette::Text, Qt::white);
-    darkPalette.setColor(QPalette::Button, QColor(45, 45, 48));
-    darkPalette.setColor(QPalette::ButtonText, Qt::white);
-    darkPalette.setColor(QPalette::BrightText, Qt::red);
-    darkPalette.setColor(QPalette::Link, QColor(42, 130, 218));
-    darkPalette.setColor(QPalette::Highlight, QColor(42, 130, 218));
-    darkPalette.setColor(QPalette::HighlightedText, Qt::white);
-    qApp->setPalette(darkPalette);
-    qApp->setStyleSheet(QStringLiteral(
-        "QMainWindow::separator { background: #808080; width: 4px; }"
-        "QMenu::item { padding: 6px 24px 6px 12px; color: #ffffff; }"
-        "QMenu::item:selected { background-color: #3c3c3c; }"
-        "QMenuBar { color: #ffffff; }"
-        "QMenuBar::item:selected { background-color: #3c3c3c; }"
-        "QToolTip { color: #ffffff; background-color: #2a82da; "
-        "border: 1px solid white; }"));
-    if (m_commitSubject)
-      m_commitSubject->setStyleSheet(QStringLiteral(
-          "QLineEdit { color: #ffffff; background-color: #3c3c3c; }"));
-    if (m_commitBody)
-      m_commitBody->setStyleSheet(QStringLiteral(
-          "QTextEdit { color: #ffffff; background-color: #3c3c3c; }"));
-  } else {
-    qApp->setPalette(qApp->style()->standardPalette());
-    qApp->setStyleSheet(QString());
-    if (m_commitSubject)
-      m_commitSubject->setStyleSheet(QStringLiteral(
-          "QLineEdit { color: #000000; background-color: #ffffff; }"));
-    if (m_commitBody)
-      m_commitBody->setStyleSheet(QStringLiteral(
-          "QTextEdit { color: #000000; background-color: #ffffff; }"));
-  }
-}
-
 void MainWindow::showPreferences() {
   QSettings settings("GitClientQt", "GitClientQt");
   QDialog dlg(this);
@@ -1132,6 +1077,100 @@ void MainWindow::showPreferences() {
   generalLayout->addWidget(reopenBox);
   generalLayout->addRow(tr("GPG key ID or email:"), gpgKeyEdit);
   tabs->addTab(generalTab, tr("General"));
+
+  auto *themeTab = new QWidget(&dlg);
+  auto *themeLayout = new QVBoxLayout(themeTab);
+
+  auto *themeCombo = new QComboBox(&dlg);
+  themeCombo->addItem(tr("Dark"), QStringLiteral("dark"));
+  themeCombo->addItem(tr("Light"), QStringLiteral("light"));
+  themeCombo->addItem(tr("Custom"), QStringLiteral("custom"));
+  themeCombo->setCurrentIndex(themeCombo->findData(
+      settings.value("theme/mode", QStringLiteral("dark"))));
+  themeLayout->addWidget(themeCombo);
+
+  const QVector<QPair<QString, QPalette::ColorRole>> roleList = {
+      {QStringLiteral("Window"), QPalette::Window},
+      {QStringLiteral("WindowText"), QPalette::WindowText},
+      {QStringLiteral("Base"), QPalette::Base},
+      {QStringLiteral("AlternateBase"), QPalette::AlternateBase},
+      {QStringLiteral("Text"), QPalette::Text},
+      {QStringLiteral("Button"), QPalette::Button},
+      {QStringLiteral("ButtonText"), QPalette::ButtonText},
+      {QStringLiteral("Highlight"), QPalette::Highlight},
+      {QStringLiteral("HighlightedText"), QPalette::HighlightedText},
+      {QStringLiteral("Link"), QPalette::Link},
+      {QStringLiteral("ToolTipBase"), QPalette::ToolTipBase},
+      {QStringLiteral("ToolTipText"), QPalette::ToolTipText}};
+
+  auto *colorGrid = new QGridLayout();
+  QVector<QPushButton *> colorButtons;
+  for (int i = 0; i < roleList.size(); ++i) {
+    auto *label = new QLabel(roleList[i].first + QLatin1Char(':'), &dlg);
+    auto *btn = new QPushButton(&dlg);
+    btn->setFlat(true);
+    colorButtons.append(btn);
+    colorGrid->addWidget(label, i, 0);
+    colorGrid->addWidget(btn, i, 1);
+  }
+  themeLayout->addLayout(colorGrid);
+
+  auto setButtonColor = [&](QPushButton *btn, const QColor &c) {
+    btn->setProperty("color", c);
+    btn->setText(c.name());
+    btn->setStyleSheet(QStringLiteral("background-color: %1;").arg(c.name()));
+  };
+
+  auto loadColors = [&](const QPalette &pal) {
+    for (int i = 0; i < roleList.size(); ++i) {
+      const QColor c = pal.color(QPalette::Active, roleList[i].second);
+      setButtonColor(colorButtons[i], c);
+    }
+  };
+
+  loadColors(qApp->palette());
+
+  connect(themeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), &dlg,
+          [&, roleList, colorButtons](int) {
+            const QString mode = themeCombo->currentData().toString();
+            if (mode == QLatin1String("custom"))
+              return;
+
+            QPalette pal;
+            if (mode == QLatin1String("dark")) {
+              pal.setColor(QPalette::Window, QColor(0x1e, 0x1e, 0x1e));
+              pal.setColor(QPalette::WindowText, QColor(0xd4, 0xd4, 0xd4));
+              pal.setColor(QPalette::Base, QColor(0x25, 0x25, 0x26));
+              pal.setColor(QPalette::AlternateBase, QColor(0x2d, 0x2d, 0x30));
+              pal.setColor(QPalette::Text, QColor(0xd4, 0xd4, 0xd4));
+              pal.setColor(QPalette::Button, QColor(0x3c, 0x3c, 0x3c));
+              pal.setColor(QPalette::ButtonText, QColor(0xd4, 0xd4, 0xd4));
+              pal.setColor(QPalette::Highlight, QColor(0x09, 0x47, 0x71));
+              pal.setColor(QPalette::HighlightedText, QColor(0xff, 0xff, 0xff));
+              pal.setColor(QPalette::Link, QColor(0x37, 0x94, 0xff));
+              pal.setColor(QPalette::ToolTipBase, QColor(0x1e, 0x1e, 0x1e));
+              pal.setColor(QPalette::ToolTipText, QColor(0xd4, 0xd4, 0xd4));
+            } else { // light
+              pal = QPalette();
+            }
+            loadColors(pal);
+          });
+
+  for (int i = 0; i < colorButtons.size(); ++i) {
+    QPushButton *btn = colorButtons[i];
+    connect(btn, &QPushButton::clicked, &dlg, [&, i, btn]() {
+      const QColor current = btn->property("color").value<QColor>();
+      const QColor c = QColorDialog::getColor(
+          current, &dlg, tr("Select color for %1").arg(roleList[i].first));
+      if (c.isValid()) {
+        setButtonColor(btn, c);
+        themeCombo->setCurrentIndex(
+            themeCombo->findData(QStringLiteral("custom")));
+      }
+    });
+  }
+
+  tabs->addTab(themeTab, tr("Theme"));
 
   auto *shortcutsTab = new QWidget(&dlg);
   auto *shortcutsLayout = new QVBoxLayout(shortcutsTab);
@@ -1202,6 +1241,61 @@ void MainWindow::showPreferences() {
   const QString pullMode = pullModeCombo->currentData().toString();
   settings.setValue("pullMode", pullMode);
   settings.setValue("reopenLastRepo", reopenBox->isChecked());
+  const QString themeMode = themeCombo->currentData().toString();
+  settings.setValue("theme/mode", themeMode);
+
+  QPalette newPalette;
+  if (themeMode == QLatin1String("dark")) {
+    newPalette.setColor(QPalette::Window, QColor(0x1e, 0x1e, 0x1e));
+    newPalette.setColor(QPalette::WindowText, QColor(0xd4, 0xd4, 0xd4));
+    newPalette.setColor(QPalette::Base, QColor(0x25, 0x25, 0x26));
+    newPalette.setColor(QPalette::AlternateBase, QColor(0x2d, 0x2d, 0x30));
+    newPalette.setColor(QPalette::Text, QColor(0xd4, 0xd4, 0xd4));
+    newPalette.setColor(QPalette::Button, QColor(0x3c, 0x3c, 0x3c));
+    newPalette.setColor(QPalette::ButtonText, QColor(0xd4, 0xd4, 0xd4));
+    newPalette.setColor(QPalette::Highlight, QColor(0x09, 0x47, 0x71));
+    newPalette.setColor(QPalette::HighlightedText, QColor(0xff, 0xff, 0xff));
+    newPalette.setColor(QPalette::Link, QColor(0x37, 0x94, 0xff));
+    newPalette.setColor(QPalette::ToolTipBase, QColor(0x1e, 0x1e, 0x1e));
+    newPalette.setColor(QPalette::ToolTipText, QColor(0xd4, 0xd4, 0xd4));
+  } else if (themeMode == QLatin1String("light")) {
+    newPalette.setColor(QPalette::Window, QColor(0xf0, 0xf0, 0xf0));
+    newPalette.setColor(QPalette::WindowText, QColor(0x00, 0x00, 0x00));
+    newPalette.setColor(QPalette::Base, QColor(0xff, 0xff, 0xff));
+    newPalette.setColor(QPalette::AlternateBase, QColor(0xf5, 0xf5, 0xf5));
+    newPalette.setColor(QPalette::Text, QColor(0x00, 0x00, 0x00));
+    newPalette.setColor(QPalette::Button, QColor(0xe0, 0xe0, 0xe0));
+    newPalette.setColor(QPalette::ButtonText, QColor(0x00, 0x00, 0x00));
+    newPalette.setColor(QPalette::Highlight, QColor(0x00, 0x78, 0xd7));
+    newPalette.setColor(QPalette::HighlightedText, QColor(0xff, 0xff, 0xff));
+    newPalette.setColor(QPalette::Link, QColor(0x00, 0x00, 0xff));
+    newPalette.setColor(QPalette::ToolTipBase, QColor(0xff, 0xff, 0xff));
+    newPalette.setColor(QPalette::ToolTipText, QColor(0x00, 0x00, 0x00));
+  } else {
+    for (int i = 0; i < roleList.size(); ++i) {
+      const QColor c = colorButtons[i]->property("color").value<QColor>();
+      if (c.isValid())
+        newPalette.setColor(QPalette::Active, roleList[i].second, c);
+    }
+  }
+  qApp->setStyle(QStyleFactory::create("Fusion"));
+  qApp->setPalette(newPalette);
+  qApp->setStyleSheet(
+      QStringLiteral("QMenuBar { color: %1; } "
+                     "QMenu::item { color: %2; }"
+                     "QLineEdit { color: %3; background-color: %4; }"
+                     "QTextEdit { color: %3; background-color: %4; }")
+          .arg(newPalette.color(QPalette::WindowText).name(),
+               newPalette.color(QPalette::Text).name(),
+               newPalette.color(QPalette::Text).name(),
+               newPalette.color(QPalette::Base).name()));
+
+  for (int i = 0; i < roleList.size(); ++i) {
+    const QColor c = newPalette.color(QPalette::Active, roleList[i].second);
+    if (c.isValid())
+      settings.setValue(QLatin1String("theme/palette/") + roleList[i].first, c);
+  }
+
   settings.setValue("gpgSigningKey", gpgKeyEdit->text().trimmed());
 
   for (auto it = actionMap.begin(); it != actionMap.end(); ++it) {
