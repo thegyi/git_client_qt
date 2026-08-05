@@ -12,7 +12,8 @@ public:
 
   QString itemPath(QTreeWidgetItem *item) const;
   QTreeWidgetItem *itemForPath(const QString &path);
-  void addFile(const QString &filePath, const QString &status = QString());
+  void addFile(const QString &filePath, const QString &status = QString(),
+               int added = -1, int removed = -1);
 
   static QIcon statusIcon(const QString &status);
 

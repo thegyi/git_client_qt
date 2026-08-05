@@ -5,6 +5,8 @@
 #include <QDragEnterEvent>
 #include <QDragMoveEvent>
 #include <QDropEvent>
+#include <QFontMetrics>
+#include <QHeaderView>
 #include <QIcon>
 #include <QMimeData>
 #include <QMouseEvent>
@@ -18,10 +20,19 @@
 
 FileTreeWidget::FileTreeWidget(const QString &headerLabel, QWidget *parent)
     : QTreeWidget(parent) {
-  if (headerLabel.isEmpty())
-    setHeaderHidden(true);
-  else
-    setHeaderLabels(QStringList{headerLabel});
+  setHeaderLabels(
+      QStringList{headerLabel, QStringLiteral("+"), QStringLiteral("-")});
+  header()->setStretchLastSection(false);
+  header()->setSectionResizeMode(0, QHeaderView::Stretch);
+  header()->setSectionResizeMode(1, QHeaderView::Fixed);
+  header()->setSectionResizeMode(2, QHeaderView::Fixed);
+  QFontMetrics fm(font());
+  const int statWidth = qMax(fm.horizontalAdvance(QStringLiteral("+000000")),
+                             fm.horizontalAdvance(QStringLiteral("-000000"))) +
+                        24;
+  setColumnWidth(1, statWidth);
+  setColumnWidth(2, statWidth);
+  setTextElideMode(Qt::ElideRight);
   setRootIsDecorated(true);
   setContextMenuPolicy(Qt::CustomContextMenu);
   setSelectionMode(QAbstractItemView::SingleSelection);
@@ -51,7 +62,8 @@ QTreeWidgetItem *FileTreeWidget::itemForPath(const QString &path) {
   return nullptr;
 }
 
-void FileTreeWidget::addFile(const QString &filePath, const QString &status) {
+void FileTreeWidget::addFile(const QString &filePath, const QString &status,
+                             int added, int removed) {
   const QStringList parts = filePath.split('/');
   const QString fileName = parts.last();
   if (fileName.isEmpty()) {
@@ -78,6 +90,18 @@ void FileTreeWidget::addFile(const QString &filePath, const QString &status) {
   leaf->setIcon(0, statusIcon(status));
   if (!status.isEmpty()) {
     leaf->setData(0, Qt::UserRole, status);
+  }
+  if (added >= 0 && removed >= 0) {
+    if (added > 0) {
+      leaf->setText(1, QStringLiteral("+%1").arg(added));
+      leaf->setForeground(1, QBrush(QColor(40, 167, 69)));
+      leaf->setTextAlignment(1, Qt::AlignRight | Qt::AlignVCenter);
+    }
+    if (removed > 0) {
+      leaf->setText(2, QStringLiteral("-%1").arg(removed));
+      leaf->setForeground(2, QBrush(QColor(220, 53, 69)));
+      leaf->setTextAlignment(2, Qt::AlignRight | Qt::AlignVCenter);
+    }
   }
 }
 

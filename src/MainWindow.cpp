@@ -709,7 +709,7 @@ MainWindow::MainWindow(QWidget *parent)
   auto *unstagedGroup = new QGroupBox(tr("Unstaged Files"), this);
   auto *unstagedLayout = new QVBoxLayout(unstagedGroup);
   unstagedGroup->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-  m_unstagedTree = new FileTreeWidget(tr("Unstaged Files"), this);
+  m_unstagedTree = new FileTreeWidget(QString(), this);
   m_unstagedTree->setMinimumHeight(120);
   connect(m_unstagedTree, &QTreeWidget::customContextMenuRequested, this,
           &MainWindow::showUnstagedContextMenu);
@@ -733,7 +733,7 @@ MainWindow::MainWindow(QWidget *parent)
   auto *stagedGroup = new QGroupBox(tr("Staged Files"), this);
   auto *stagedLayout = new QVBoxLayout(stagedGroup);
   stagedGroup->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-  m_stagedTree = new FileTreeWidget(tr("Staged Files"), this);
+  m_stagedTree = new FileTreeWidget(QString(), this);
   m_stagedTree->setMinimumHeight(120);
   connect(m_stagedTree, &QTreeWidget::customContextMenuRequested, this,
           &MainWindow::showStagedContextMenu);
@@ -2736,11 +2736,70 @@ void MainWindow::loadWorkingTree() {
       m_gitExecutor->run(m_currentPath,
                          {"ls-files", "--others", "--exclude-standard"}));
 
-  for (const FileStatus &fs : m_workingTreeModel->stagedFiles())
-    m_stagedTree->addFile(fs.first, fs.second);
+  auto parseNumstat = [](const QStringList &lines,
+                         QHash<QString, int> &addedMap,
+                         QHash<QString, int> &removedMap) {
+    for (const QString &line : lines) {
+      const QStringList parts = line.split('\t');
+      if (parts.size() < 3)
+        continue;
+      bool okAdd = false, okRem = false;
+      int added = 0, removed = 0;
+      if (parts[0] == QStringLiteral("-")) {
+        added = 0;
+        okAdd = true;
+      } else {
+        added = parts[0].toInt(&okAdd);
+      }
+      if (parts[1] == QStringLiteral("-")) {
+        removed = 0;
+        okRem = true;
+      } else {
+        removed = parts[1].toInt(&okRem);
+      }
+      if (!okAdd || !okRem)
+        continue;
+      addedMap[parts[2]] = added;
+      removedMap[parts[2]] = removed;
+    }
+  };
 
-  for (const FileStatus &fs : m_workingTreeModel->unstagedFiles())
-    m_unstagedTree->addFile(fs.first, fs.second);
+  QHash<QString, int> stagedAdded;
+  QHash<QString, int> stagedRemoved;
+  QHash<QString, int> unstagedAdded;
+  QHash<QString, int> unstagedRemoved;
+
+  parseNumstat(
+      m_gitExecutor->run(m_currentPath, {"diff", "--cached", "--numstat"}),
+      stagedAdded, stagedRemoved);
+  parseNumstat(m_gitExecutor->run(m_currentPath, {"diff", "--numstat"}),
+               unstagedAdded, unstagedRemoved);
+
+  for (const FileStatus &fs : m_workingTreeModel->stagedFiles())
+    m_stagedTree->addFile(fs.first, fs.second, stagedAdded.value(fs.first, -1),
+                          stagedRemoved.value(fs.first, -1));
+
+  for (const FileStatus &fs : m_workingTreeModel->unstagedFiles()) {
+    int added = unstagedAdded.value(fs.first, -1);
+    int removed = unstagedRemoved.value(fs.first, -1);
+    if (fs.second == QStringLiteral("?") && added < 0) {
+      const QString fullPath = m_currentPath + QLatin1Char('/') + fs.first;
+      added = 0;
+      QFile f(fullPath);
+      if (f.open(QIODevice::ReadOnly)) {
+        char buffer[4096];
+        qint64 n;
+        while ((n = f.read(buffer, sizeof(buffer))) > 0) {
+          for (qint64 i = 0; i < n; ++i) {
+            if (buffer[i] == '\n')
+              ++added;
+          }
+        }
+      }
+      removed = 0;
+    }
+    m_unstagedTree->addFile(fs.first, fs.second, added, removed);
+  }
 
   if (m_stagedTree)
     m_stagedTree->collapseAll();
@@ -3725,6 +3784,34 @@ void MainWindow::onCommitSelected(QTableWidgetItem *item) {
     m_repoSelectedShas[m_currentPath] = m_selectedCommitSha;
   loadCommitMessageIntoEditor(m_selectedCommitSha);
 
+  QHash<QString, int> addedMap;
+  QHash<QString, int> removedMap;
+  for (const QString &line : m_gitExecutor->run(
+           m_currentPath, {"diff-tree", "--no-commit-id", "--numstat", "--root",
+                           "-r", m_selectedCommitSha})) {
+    const QStringList parts = line.split('\t');
+    if (parts.size() < 3)
+      continue;
+    bool okAdd = false, okRem = false;
+    int added = 0, removed = 0;
+    if (parts[0] == QStringLiteral("-")) {
+      added = 0;
+      okAdd = true;
+    } else {
+      added = parts[0].toInt(&okAdd);
+    }
+    if (parts[1] == QStringLiteral("-")) {
+      removed = 0;
+      okRem = true;
+    } else {
+      removed = parts[1].toInt(&okRem);
+    }
+    if (!okAdd || !okRem)
+      continue;
+    addedMap[parts[2]] = added;
+    removedMap[parts[2]] = removed;
+  }
+
   for (const QString &line : m_gitExecutor->run(
            m_currentPath, {"diff-tree", "--no-commit-id", "--name-status",
                            "--root", "-r", m_selectedCommitSha})) {
@@ -3735,7 +3822,8 @@ void MainWindow::onCommitSelected(QTableWidgetItem *item) {
     const QString filePath = parts.last();
     if (status.isEmpty() || filePath.isEmpty())
       continue;
-    m_commitFilesTree->addFile(filePath, status);
+    m_commitFilesTree->addFile(filePath, status, addedMap.value(filePath, 0),
+                               removedMap.value(filePath, 0));
   }
 
   if (m_commitFilesTree->topLevelItemCount() > 0) {
