@@ -4033,6 +4033,18 @@ void MainWindow::onCommitSelected(QTableWidgetItem *item) {
   QTableWidgetItem *shaItem = m_commitTable->item(row, 6);
   const QString sha =
       shaItem ? shaItem->data(Qt::UserRole).toString() : QString();
+
+  if (m_amendCheckBox) {
+    m_amendCheckBox->setEnabled(sha.isEmpty());
+    if (!sha.isEmpty())
+      m_amendCheckBox->setChecked(false);
+  }
+  if (m_signCommitCheckBox) {
+    m_signCommitCheckBox->setEnabled(sha.isEmpty());
+    if (!sha.isEmpty())
+      m_signCommitCheckBox->setChecked(false);
+  }
+
   if (sha.isEmpty()) {
     m_selectedCommitSha.clear();
     if (!m_currentPath.isEmpty())
