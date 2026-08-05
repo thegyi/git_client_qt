@@ -44,6 +44,7 @@
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QScreen>
+#include <QScrollBar>
 #include <QSettings>
 #include <QShortcut>
 #include <QSpinBox>
@@ -90,6 +91,12 @@
 #include <QNetworkRequest>
 #include <QVersionNumber>
 
+namespace {
+QIcon themedIcon(const QString &theme, QStyle::StandardPixmap fallback) {
+  return QIcon::fromTheme(theme, QApplication::style()->standardIcon(fallback));
+}
+} // namespace
+
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent), ui(new Ui::MainWindow) {
   m_gitExecutor = new GitExecutor(this);
@@ -101,6 +108,23 @@ MainWindow::MainWindow(QWidget *parent)
   ui->menuFile->setTitle(tr("&File"));
   ui->menuEdit->setTitle(tr("&Edit"));
   ui->menuHelp->setTitle(tr("&Help"));
+
+  if (ui->actionOpen)
+    ui->actionOpen->setIcon(
+        themedIcon("document-open", QStyle::SP_DirOpenIcon));
+  if (ui->actionClose)
+    ui->actionClose->setIcon(
+        themedIcon("window-close", QStyle::SP_DialogCloseButton));
+  if (ui->actionExit)
+    ui->actionExit->setIcon(
+        themedIcon("application-exit", QStyle::SP_DialogCloseButton));
+  if (ui->actionPreferences)
+    ui->actionPreferences->setIcon(
+        themedIcon("preferences-system", QStyle::SP_ComputerIcon));
+  if (ui->actionAbout)
+    ui->actionAbout->setIcon(
+        themedIcon("help-about", QStyle::SP_MessageBoxInformation));
+  setWindowIcon(themedIcon("git-client-qt", QStyle::SP_DirHomeIcon));
   setDockNestingEnabled(true);
 
   m_watcher = new QFileSystemWatcher(this);
@@ -159,6 +183,8 @@ MainWindow::MainWindow(QWidget *parent)
 
     auto *checkForUpdatesAction =
         ui->menuHelp->addAction(tr("&Check for Updates..."));
+    checkForUpdatesAction->setIcon(
+        themedIcon("system-software-update", QStyle::SP_BrowserReload));
     checkForUpdatesAction->setStatusTip(
         tr("Check GitHub for the latest release"));
     connect(checkForUpdatesAction, &QAction::triggered, this,
@@ -557,6 +583,15 @@ MainWindow::MainWindow(QWidget *parent)
   connect(m_commitTable, &QTableWidget::customContextMenuRequested, this,
           &MainWindow::showCommitContextMenu);
 
+  m_diffView = new DiffViewWidget(this);
+  m_diffView->setMinimumHeight(120);
+  m_diffView->setFont(Theme::monospaceFont());
+  m_diffView->setFrameStyle(QFrame::NoFrame);
+  m_diffView->document()->setDocumentMargin(0);
+  connect(m_diffView, &QTextBrowser::anchorClicked, this,
+          &MainWindow::onDiffAnchorClicked);
+  showEmptyDiff();
+
   m_centralStack = new QStackedWidget(this);
   auto *welcomeWidget = new QWidget(m_centralStack);
   auto *welcomeLayout = new QVBoxLayout(welcomeWidget);
@@ -590,8 +625,12 @@ MainWindow::MainWindow(QWidget *parent)
   connect(initButton, &QPushButton::clicked, this,
           &MainWindow::onInitRepository);
 
+  m_viewTabWidget = new QTabWidget(this);
+  m_viewTabWidget->addTab(m_commitTable, tr("History"));
+  m_viewTabWidget->addTab(m_diffView, tr("Diff"));
+
   m_centralStack->addWidget(welcomeWidget);
-  m_centralStack->addWidget(m_commitTable);
+  m_centralStack->addWidget(m_viewTabWidget);
   m_centralStack->setCurrentIndex(0);
 
   m_repoTabBar = new QTabBar(this);
@@ -669,7 +708,9 @@ MainWindow::MainWindow(QWidget *parent)
 
   auto *unstagedGroup = new QGroupBox(tr("Unstaged Files"), this);
   auto *unstagedLayout = new QVBoxLayout(unstagedGroup);
+  unstagedGroup->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
   m_unstagedTree = new FileTreeWidget(tr("Unstaged Files"), this);
+  m_unstagedTree->setMinimumHeight(120);
   connect(m_unstagedTree, &QTreeWidget::customContextMenuRequested, this,
           &MainWindow::showUnstagedContextMenu);
   connect(m_unstagedTree, &QTreeWidget::itemClicked, this,
@@ -691,7 +732,9 @@ MainWindow::MainWindow(QWidget *parent)
 
   auto *stagedGroup = new QGroupBox(tr("Staged Files"), this);
   auto *stagedLayout = new QVBoxLayout(stagedGroup);
+  stagedGroup->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
   m_stagedTree = new FileTreeWidget(tr("Staged Files"), this);
+  m_stagedTree->setMinimumHeight(120);
   connect(m_stagedTree, &QTreeWidget::customContextMenuRequested, this,
           &MainWindow::showStagedContextMenu);
   connect(m_stagedTree, &QTreeWidget::itemClicked, this,
@@ -713,6 +756,8 @@ MainWindow::MainWindow(QWidget *parent)
   auto *messageLayout = new QVBoxLayout(messageGroup);
   m_commitSubject = new QLineEdit(this);
   m_commitSubject->setPlaceholderText(tr("Short summary"));
+  connect(m_commitSubject, &QLineEdit::textChanged, this,
+          &MainWindow::updateCommitButton);
   messageLayout->addWidget(m_commitSubject);
   m_commitBody = new QTextEdit(this);
   m_commitBody->setPlaceholderText(tr("Long description"));
@@ -736,6 +781,8 @@ MainWindow::MainWindow(QWidget *parent)
       QApplication::style()->standardIcon(QStyle::SP_DialogOkButton));
   m_commitButton->setEnabled(false);
   m_commitButton->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Return));
+  connect(m_commitButton, &QPushButton::clicked, this,
+          &MainWindow::onCommitClicked);
   messageLayout->addWidget(m_commitButton);
   rightLayout->addWidget(messageGroup);
 
@@ -750,17 +797,14 @@ MainWindow::MainWindow(QWidget *parent)
   showEmptyCommitFiles();
   rightLayout->addWidget(commitFilesGroup);
 
-  connect(m_commitButton, &QPushButton::clicked, this,
-          &MainWindow::onCommitClicked);
-  connect(m_commitSubject, &QLineEdit::textChanged, this,
-          &MainWindow::updateCommitButton);
-  if (m_amendCheckBox)
-    connect(m_amendCheckBox, &QCheckBox::stateChanged, this,
-            &MainWindow::onAmendToggled);
+  rightLayout->setStretchFactor(unstagedGroup, 2);
+  rightLayout->setStretchFactor(stagedGroup, 2);
+  rightLayout->setStretchFactor(commitFilesGroup, 1);
 
   rightDock->setWidget(rightWidget);
   rightDock->setTitleBarWidget(new QWidget(rightDock));
   rightDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
+  rightDock->setMinimumWidth(320);
   m_workTreeDock = rightDock;
   m_mainSplitter->addWidget(rightDock);
 
@@ -770,17 +814,6 @@ MainWindow::MainWindow(QWidget *parent)
   mainContainerLayout->setSpacing(0);
   mainContainerLayout->addWidget(m_mainSplitter);
   setCentralWidget(mainContainer);
-
-  m_diffDock = new QDockWidget(tr("Diff"), this);
-  m_diffDock->setObjectName(QStringLiteral("diffDock"));
-  m_diffView = new DiffViewWidget(this);
-  m_diffView->setMinimumHeight(120);
-  m_diffView->setFont(Theme::monospaceFont());
-  m_diffView->setFrameStyle(QFrame::NoFrame);
-  m_diffView->document()->setDocumentMargin(0);
-  connect(m_diffView, &QTextBrowser::anchorClicked, this,
-          &MainWindow::onDiffAnchorClicked);
-  showEmptyDiff();
 
   m_grepDock = new QDockWidget(tr("Grep"), this);
   m_grepDock->setObjectName(QStringLiteral("grepDock"));
@@ -847,10 +880,6 @@ MainWindow::MainWindow(QWidget *parent)
             m_commandLogEdit->append(QString());
           });
 
-  m_diffDock->setWidget(m_diffView);
-  m_diffDock->setFeatures(QDockWidget::DockWidgetMovable);
-  addDockWidget(Qt::BottomDockWidgetArea, m_diffDock);
-
   auto *viewMenu = new QMenu(tr("&View"), this);
   menuBar()->insertMenu(ui->menuHelp->menuAction(), viewMenu);
 
@@ -865,7 +894,6 @@ MainWindow::MainWindow(QWidget *parent)
 
   addVisibilityAction(tr("Repository panel"), m_repoDock);
   addVisibilityAction(tr("Working tree"), m_workTreeDock);
-  addVisibilityAction(tr("Diff"), m_diffDock);
   addVisibilityAction(tr("Grep"), m_grepDock);
   addVisibilityAction(tr("Command log"), m_commandLogDock);
 
@@ -1166,16 +1194,16 @@ void MainWindow::applyFonts() {
   }
 
   const QFont mono = Theme::monospaceFont();
+  if (m_diffPresenter)
+    m_diffPresenter->setMonospaceFont(mono.family(), mono.pointSize());
   if (m_diffView)
     m_diffView->setFont(mono);
   if (m_commandLogEdit)
     m_commandLogEdit->setFont(mono);
   if (m_commitTable) {
     for (int row = 0; row < m_commitTable->rowCount(); ++row) {
-      for (const int column : {0, 6}) {
-        if (QTableWidgetItem *item = m_commitTable->item(row, column))
-          item->setFont(mono);
-      }
+      if (QTableWidgetItem *item = m_commitTable->item(row, 6))
+        item->setFont(mono);
     }
   }
 }
@@ -1729,8 +1757,14 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
     return;
 
   const bool switchingRepo = !m_currentPath.isEmpty() && m_currentPath != path;
-  if (switchingRepo)
+  if (switchingRepo) {
     saveDockAndColumnState(false);
+    showEmptyDiff();
+    m_currentDiffPath.clear();
+    m_currentDiffLines.clear();
+    m_selectedCommitSha.clear();
+    showEmptyCommitFiles();
+  }
 
   m_gitRepository->setPath(path);
   if (!m_gitRepository->isValid()) {
@@ -2051,12 +2085,15 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
       const int row = m_commitTable->rowCount();
       m_commitTable->insertRow(row);
 
-      auto *graphItem = new QTableWidgetItem(c.graph);
-      graphItem->setToolTip(tip);
       const QFont graphFont = Theme::monospaceFont();
-      graphItem->setFont(graphFont);
-      graphColumnWidth = qMax(
-          graphColumnWidth, QFontMetrics(graphFont).horizontalAdvance(c.graph));
+      const int rowHeight =
+          m_commitTable->verticalHeader()->defaultSectionSize();
+      const QPixmap graphPixmap =
+          CommitTableWidget::commitGraphPixmap(c.graph, rowHeight, graphFont);
+      auto *graphItem = new QTableWidgetItem;
+      graphItem->setData(Qt::DecorationRole, graphPixmap);
+      graphItem->setToolTip(tip);
+      graphColumnWidth = qMax(graphColumnWidth, graphPixmap.width());
       if (bgBrush != QBrush())
         graphItem->setBackground(bgBrush);
       m_commitTable->setItem(row, 0, graphItem);
@@ -2125,13 +2162,50 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
   if (isInitialLoad) {
     const int leftWidth = qBound(
         80, m_repoPanel ? m_repoPanel->sizeHint().width() + 20 : 180, 200);
-    const int rightWidth = 200;
+    const int rightWidth = 320;
     if (m_mainSplitter)
       m_mainSplitter->setSizes({leftWidth, tableWidth, rightWidth});
     resize(leftWidth + tableWidth + rightWidth, height());
   }
   updateFilter();
   updateAmendWarning();
+
+  if (m_commitTable) {
+    if (m_repoSelectedShas.contains(m_currentPath)) {
+      const QString savedSha = m_repoSelectedShas.value(m_currentPath);
+      if (savedSha.isEmpty()) {
+        if (m_commitTable->rowCount() > 0) {
+          const int row = 0;
+          if (QTableWidgetItem *item = m_commitTable->item(row, 0)) {
+            m_commitTable->selectRow(row);
+            m_commitTable->scrollToItem(item, QAbstractItemView::EnsureVisible);
+            onCommitSelected(item);
+          }
+        }
+      } else {
+        for (int row = 0; row < m_commitTable->rowCount(); ++row) {
+          if (QTableWidgetItem *shaItem = m_commitTable->item(row, 6)) {
+            if (shaItem->data(Qt::UserRole).toString() == savedSha) {
+              m_commitTable->selectRow(row);
+              m_commitTable->scrollToItem(shaItem,
+                                          QAbstractItemView::EnsureVisible);
+              if (QTableWidgetItem *item = m_commitTable->item(row, 0))
+                onCommitSelected(item);
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    const int savedHScroll = m_repoHorizontalScroll.value(m_currentPath, 0);
+    if (m_commitTable->horizontalScrollBar()) {
+      QTimer::singleShot(0, this, [this, savedHScroll]() {
+        if (m_commitTable && m_commitTable->horizontalScrollBar())
+          m_commitTable->horizontalScrollBar()->setValue(savedHScroll);
+      });
+    }
+  }
 
   loadWorkingTree();
 
@@ -2670,6 +2744,42 @@ void MainWindow::loadWorkingTree() {
   if (m_unstagedTree)
     m_unstagedTree->collapseAll();
   updateCommitButton();
+  restoreSelectedFiles();
+}
+
+void MainWindow::restoreSelectedFiles() {
+  if (m_currentPath.isEmpty())
+    return;
+
+  if (m_unstagedTree) {
+    const QString path = m_repoUnstagedFile.value(m_currentPath);
+    if (!path.isEmpty()) {
+      if (QTreeWidgetItem *item = m_unstagedTree->itemForPath(path)) {
+        m_unstagedTree->setCurrentItem(item);
+        onFileClicked(item, 0);
+      }
+    }
+  }
+
+  if (m_stagedTree) {
+    const QString path = m_repoStagedFile.value(m_currentPath);
+    if (!path.isEmpty()) {
+      if (QTreeWidgetItem *item = m_stagedTree->itemForPath(path)) {
+        m_stagedTree->setCurrentItem(item);
+        onFileClicked(item, 0);
+      }
+    }
+  }
+
+  if (m_commitFilesTree) {
+    const QString path = m_repoCommitFile.value(m_currentPath);
+    if (!path.isEmpty()) {
+      if (QTreeWidgetItem *item = m_commitFilesTree->itemForPath(path)) {
+        m_commitFilesTree->setCurrentItem(item);
+        onCommitFileClicked(item, 0);
+      }
+    }
+  }
 }
 
 void MainWindow::updateCommitButton() {
@@ -2682,25 +2792,28 @@ void MainWindow::updateCommitButton() {
   m_commitButton->setEnabled(hasMessage && (hasStaged || amend));
 }
 
+void MainWindow::loadCommitMessageIntoEditor(const QString &sha) {
+  if (!m_commitSubject || !m_commitBody || m_currentPath.isEmpty())
+    return;
+  const QStringList args = sha.isEmpty()
+                               ? QStringList{"log", "-1", "--format=%B"}
+                               : QStringList{"log", "-1", sha, "--format=%B"};
+  const QStringList lines = m_gitExecutor->run(m_currentPath, args);
+  if (lines.isEmpty())
+    return;
+  m_commitSubject->setText(lines.first());
+  m_commitBody->setText(lines.mid(1).join('\n').trimmed());
+}
+
 void MainWindow::onAmendToggled(int state) {
   if (state == Qt::Checked && m_currentPath.isEmpty())
     return;
 
   if (state == Qt::Checked) {
-    const QStringList lines =
-        m_gitExecutor->run(m_currentPath, {"log", "-1", "--format=%B"});
-    if (lines.isEmpty())
-      return;
-
     m_commitSubjectDraft =
         m_commitSubject ? m_commitSubject->text() : QString();
     m_commitBodyDraft = m_commitBody ? m_commitBody->toPlainText() : QString();
-
-    if (m_commitSubject)
-      m_commitSubject->setText(lines.first());
-    if (m_commitBody) {
-      m_commitBody->setText(lines.mid(1).join('\n').trimmed());
-    }
+    loadCommitMessageIntoEditor(m_selectedCommitSha);
   } else {
     if (m_commitSubject)
       m_commitSubject->setText(m_commitSubjectDraft);
@@ -3442,7 +3555,8 @@ void MainWindow::diffWithCommit(const QString &fromSha) {
     m_diffView->showEmpty(tr("No diff"),
                           tr("No changes to show for this selection."));
   } else {
-    m_diffDock->setVisible(true);
+    if (m_viewTabWidget)
+      m_viewTabWidget->setCurrentWidget(m_diffView);
   }
   m_diffView->setHtml(m_diffPresenter->formatDiff(diff));
   statusBar()->showMessage(
@@ -3587,12 +3701,26 @@ void MainWindow::onCommitSelected(QTableWidgetItem *item) {
 
   const int row = item->row();
   QTableWidgetItem *shaItem = m_commitTable->item(row, 6);
-  if (!shaItem) {
+  const QString sha =
+      shaItem ? shaItem->data(Qt::UserRole).toString() : QString();
+  if (sha.isEmpty()) {
+    m_selectedCommitSha.clear();
+    if (!m_currentPath.isEmpty())
+      m_repoSelectedShas[m_currentPath] = m_selectedCommitSha;
     showEmptyCommitFiles();
+    if (m_amendCheckBox && m_amendCheckBox->isChecked()) {
+      if (m_commitSubject)
+        m_commitSubject->clear();
+      if (m_commitBody)
+        m_commitBody->clear();
+    }
     return;
   }
 
-  m_selectedCommitSha = shaItem->data(Qt::UserRole).toString();
+  m_selectedCommitSha = sha;
+  if (!m_currentPath.isEmpty())
+    m_repoSelectedShas[m_currentPath] = m_selectedCommitSha;
+  loadCommitMessageIntoEditor(m_selectedCommitSha);
 
   for (const QString &line : m_gitExecutor->run(
            m_currentPath, {"diff-tree", "--no-commit-id", "--name-status",
@@ -3624,6 +3752,8 @@ void MainWindow::onCommitFileClicked(QTreeWidgetItem *item, int column) {
     return;
 
   const QString path = m_commitFilesTree->itemPath(item);
+  if (!m_currentPath.isEmpty())
+    m_repoCommitFile[m_currentPath] = path;
   const QStringList diff = m_gitExecutor->run(
       m_currentPath, {"show", "--pretty=format:", "--no-notes",
                       m_selectedCommitSha, "--", path});
@@ -3638,7 +3768,8 @@ void MainWindow::onCommitFileClicked(QTreeWidgetItem *item, int column) {
     const QString html = m_diffPresenter->isLfsPointer(diff)
                              ? m_diffPresenter->lfsPointerHtml(diff)
                              : m_diffPresenter->formatDiff(diff);
-    m_diffDock->setVisible(true);
+    if (m_viewTabWidget)
+      m_viewTabWidget->setCurrentWidget(m_diffView);
     m_diffView->setHtml(html);
   }
 }
@@ -3667,7 +3798,8 @@ void MainWindow::diffWithRemote() {
                             tr("Local and remote HEAD are the same."));
     } else {
       if (m_diffDock)
-        m_diffDock->setVisible(true);
+        if (m_viewTabWidget)
+          m_viewTabWidget->setCurrentWidget(m_diffView);
       m_diffView->setHtml(m_diffPresenter->formatDiff(diff));
     }
   }
@@ -4026,7 +4158,8 @@ void MainWindow::onStashClicked(QTreeWidgetItem *item, int column) {
       m_diffView->showEmpty(tr("No diff"),
                             tr("No changes to show for this selection."));
     } else {
-      m_diffDock->setVisible(true);
+      if (m_viewTabWidget)
+        m_viewTabWidget->setCurrentWidget(m_diffView);
     }
     m_diffView->setHtml(m_diffPresenter->formatDiff(diff));
   }
@@ -4038,12 +4171,16 @@ void MainWindow::onFileClicked(QTreeWidgetItem *item, int column) {
     return;
   }
 
-  auto *tree = qobject_cast<FileTreeWidget *>(sender());
+  auto *tree = qobject_cast<FileTreeWidget *>(item->treeWidget());
   if (!tree) {
     return;
   }
 
   const QString path = tree->itemPath(item);
+  if (tree == m_unstagedTree)
+    m_repoUnstagedFile[m_currentPath] = path;
+  else if (tree == m_stagedTree)
+    m_repoStagedFile[m_currentPath] = path;
   const bool staged = (tree == m_stagedTree);
   const bool isFolder = item->childCount() > 0;
   const bool isNew =
@@ -4064,7 +4201,8 @@ void MainWindow::onFileClicked(QTreeWidgetItem *item, int column) {
         const QString html = m_diffPresenter->isLfsPointer(diff)
                                  ? m_diffPresenter->lfsPointerHtml(diff)
                                  : m_diffPresenter->formatDiff(diff);
-        m_diffDock->setVisible(true);
+        if (m_viewTabWidget)
+          m_viewTabWidget->setCurrentWidget(m_diffView);
         m_diffView->setHtml(html);
       }
     } else {
@@ -4082,7 +4220,8 @@ void MainWindow::onFileClicked(QTreeWidgetItem *item, int column) {
         const QString html = m_diffPresenter->isLfsPointer(diff)
                                  ? m_diffPresenter->lfsPointerHtml(diff)
                                  : m_diffPresenter->formatDiff(diff);
-        m_diffDock->setVisible(true);
+        if (m_viewTabWidget)
+          m_viewTabWidget->setCurrentWidget(m_diffView);
         m_diffView->setHtml(html);
       }
     }
@@ -4107,7 +4246,8 @@ void MainWindow::onFileClicked(QTreeWidgetItem *item, int column) {
     const QString html = m_diffPresenter->isLfsPointer(diff)
                              ? m_diffPresenter->lfsPointerHtml(diff)
                              : m_diffPresenter->formatDiff(diff, true, staged);
-    m_diffDock->setVisible(true);
+    if (m_viewTabWidget)
+      m_viewTabWidget->setCurrentWidget(m_diffView);
     m_diffView->setHtml(html);
   }
 }
@@ -5486,6 +5626,12 @@ void MainWindow::onRepositoryTabChanged(int index) {
   const QString path = m_repoTabBar->tabData(index).toString();
   if (path == m_currentPath)
     return;
+  if (!m_currentPath.isEmpty())
+    m_repoSelectedShas[m_currentPath] = m_selectedCommitSha;
+  if (!m_currentPath.isEmpty() && m_commitTable &&
+      m_commitTable->horizontalScrollBar())
+    m_repoHorizontalScroll[m_currentPath] =
+        m_commitTable->horizontalScrollBar()->value();
   loadRepository(path, false);
 }
 

@@ -5,13 +5,55 @@
 
 DiffPresenter::DiffPresenter(QObject *parent) : QObject(parent) {}
 
+void DiffPresenter::setMonospaceFont(const QString &family, int pointSize) {
+  m_fontFamily = family;
+  m_fontSize = pointSize;
+}
+
 QString DiffPresenter::formatDiff(const QStringList &lines,
                                   bool includeHunkLinks,
                                   bool unstageLink) const {
-  QString html = QStringLiteral(
-      "<html>"
-      "<body style=\"background-color:#1e1e1e\">"
-      "<table width=\"100%\" cellspacing=\"0\" cellpadding=\"0\">");
+  const int fontSize = qMax(8, m_fontSize > 0 ? m_fontSize : 10);
+  const QString fontFamily =
+      m_fontFamily.isEmpty() ? QStringLiteral("monospace") : m_fontFamily;
+
+  const QString baseColor = QStringLiteral("#1e1e1e");
+  const QString textColor = QStringLiteral("#cccccc");
+  const QString gutterColor = QStringLiteral("#2b2b2b");
+  const QString gutterTextColor = QStringLiteral("#888888");
+  const QString headerBg = QStringLiteral("#3c3c3c");
+  const QString headerText = QStringLiteral("#aaaaaa");
+  const QString addBg = QStringLiteral("#1e4d2b");
+  const QString addText = QStringLiteral("#d4edda");
+  const QString delBg = QStringLiteral("#4d1e1e");
+  const QString delText = QStringLiteral("#f8d7da");
+  const QString linkColor = QStringLiteral("#4fc3f7");
+
+  const QString bodyStyle =
+      QStringLiteral(
+          "background-color:%1; color:%2; font-family:'%3',monospace; "
+          "font-size:%4pt")
+          .arg(baseColor, textColor, fontFamily, QString::number(fontSize));
+
+  const QString headerStyle =
+      QStringLiteral("background-color:%1; color:%2").arg(headerBg, headerText);
+
+  const QString gutterStyle =
+      QStringLiteral("background-color:%1; color:%2; text-align:right; "
+                     "width:45px; border-right:1px solid #3c3c3c")
+          .arg(gutterColor, gutterTextColor);
+
+  const QString hunkLinkStyle =
+      QStringLiteral("color:%1; text-decoration:none; float:right; "
+                     "padding-right:6px")
+          .arg(linkColor);
+
+  QString html =
+      QStringLiteral(
+          "<html>"
+          "<body style=\"%1\">"
+          "<table width=\"100%\" cellspacing=\"0\" cellpadding=\"0\">")
+          .arg(bodyStyle);
 
   int oldLine = -1;
   int newLine = -1;
@@ -28,16 +70,12 @@ QString DiffPresenter::formatDiff(const QStringList &lines,
       }
       const QString link =
           includeHunkLinks
-              ? QStringLiteral("<a href=\"git:hunk:%1\" "
-                               "style=\"color:#4fc3f7; "
-                               "text-decoration:none; "
-                               "float:right; padding-right:6px;\">%2</a>")
-                    .arg(QString::number(hunkIndex++),
+              ? QStringLiteral("<a href=\"git:hunk:%1\" style=\"%2\">%3</a>")
+                    .arg(QString::number(hunkIndex++), hunkLinkStyle,
                          unstageLink ? tr("unstage hunk") : tr("stage hunk"))
               : QString();
-      html += QStringLiteral(
-                  "<tr><td colspan=\"2\" "
-                  "style=\"background-color:#3c3c3c; color:#aaaaaa;\">") +
+      html += QStringLiteral("<tr><td colspan=\"3\" style=\"%1\">")
+                  .arg(headerStyle) +
               link + QStringLiteral("<pre style=\"margin:0\">") +
               line.toHtmlEscaped() + QStringLiteral("</pre></td></tr>");
       continue;
@@ -47,48 +85,52 @@ QString DiffPresenter::formatDiff(const QStringList &lines,
         line.startsWith(QStringLiteral("index ")) ||
         line.startsWith(QStringLiteral("--- ")) ||
         line.startsWith(QStringLiteral("+++ "))) {
-      html +=
-          QStringLiteral("<tr><td colspan=\"2\" "
-                         "style=\"background-color:#3c3c3c; color:#aaaaaa;\">"
-                         "<pre style=\"margin:0\">") +
-          line.toHtmlEscaped() + QStringLiteral("</pre></td></tr>");
+      html += QStringLiteral("<tr><td colspan=\"3\" style=\"%1\">")
+                  .arg(headerStyle) +
+              QStringLiteral("<pre style=\"margin:0\">") +
+              line.toHtmlEscaped() + QStringLiteral("</pre></td></tr>");
       continue;
     }
 
-    QString bg;
-    QString fg;
-    QString lineNum = QStringLiteral("&nbsp;");
+    QString bg = baseColor;
+    QString fg = textColor;
+    QString oldLineNum = QStringLiteral("&nbsp;");
+    QString newLineNum = QStringLiteral("&nbsp;");
     const QString content = line.toHtmlEscaped();
 
     if (line.startsWith('+') && !line.startsWith(QStringLiteral("+++ "))) {
-      bg = QStringLiteral("#1e4d2b");
-      fg = QStringLiteral("#d4edda");
-      lineNum = QString::number(newLine++);
+      bg = addBg;
+      fg = addText;
+      newLineNum = QString::number(newLine++);
     } else if (line.startsWith('-') &&
                !line.startsWith(QStringLiteral("--- "))) {
-      bg = QStringLiteral("#4d1e1e");
-      fg = QStringLiteral("#f8d7da");
-      lineNum = QString::number(oldLine++);
+      bg = delBg;
+      fg = delText;
+      oldLineNum = QString::number(oldLine++);
     } else {
-      bg = QStringLiteral("#2b2b2b");
-      fg = QStringLiteral("#cccccc");
+      if (oldLine >= 0)
+        oldLineNum = QString::number(oldLine++);
       if (newLine >= 0)
-        lineNum = QString::number(newLine++);
-      else if (oldLine >= 0)
-        lineNum = QString::number(oldLine++);
+        newLineNum = QString::number(newLine++);
     }
 
-    html += QStringLiteral("<tr>"
-                           "<td align=\"right\" "
-                           "style=\"width:45px; background-color:#2b2b2b; "
-                           "color:#888888;\">"
-                           "<pre style=\"margin:0\">") +
-            lineNum +
+    const QString lineStyle =
+        QStringLiteral("background-color:%1; color:%2; padding-left:4px")
+            .arg(bg, fg);
+
+    html += QStringLiteral(
+                "<tr>"
+                "<td style=\"%1\" align=\"right\"><pre style=\"margin:0\">")
+                .arg(gutterStyle) +
+            oldLineNum +
+            QStringLiteral(
+                "</pre></td>"
+                "<td style=\"%1\" align=\"right\"><pre style=\"margin:0\">")
+                .arg(gutterStyle) +
+            newLineNum +
             QStringLiteral("</pre></td>"
-                           "<td style=\"background-color:") +
-            bg + QStringLiteral("; color:") + fg +
-            QStringLiteral("; padding-left:4px;\">"
-                           "<pre style=\"margin:0\">") +
+                           "<td style=\"%1\"><pre style=\"margin:0\">")
+                .arg(lineStyle) +
             content + QStringLiteral("</pre></td></tr>");
   }
 

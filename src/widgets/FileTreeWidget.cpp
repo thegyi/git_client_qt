@@ -13,6 +13,8 @@
 #include <QPixmap>
 #include <QPolygonF>
 #include <QStyle>
+#include <QTreeWidgetItemIterator>
+#include <functional>
 
 FileTreeWidget::FileTreeWidget(const QString &headerLabel, QWidget *parent)
     : QTreeWidget(parent) {
@@ -37,6 +39,16 @@ QString FileTreeWidget::itemPath(QTreeWidgetItem *item) const {
     current = current->parent();
   }
   return parts.join('/');
+}
+
+QTreeWidgetItem *FileTreeWidget::itemForPath(const QString &path) {
+  QTreeWidgetItemIterator it(this);
+  while (*it) {
+    if (itemPath(*it) == path)
+      return *it;
+    ++it;
+  }
+  return nullptr;
 }
 
 void FileTreeWidget::addFile(const QString &filePath, const QString &status) {
@@ -79,34 +91,51 @@ QIcon FileTreeWidget::statusIcon(const QString &status) {
   QPainter painter(&pixmap);
   painter.setRenderHint(QPainter::Antialiasing);
 
-  if (status == "?" || status == "A") {
-    QPen pen(QColor(40, 167, 69));
-    pen.setWidth(2);
-    pen.setCapStyle(Qt::RoundCap);
-    painter.setPen(pen);
-    painter.drawLine(8, 4, 8, 12);
-    painter.drawLine(4, 8, 12, 8);
-  } else if (status == "M") {
-    QPen pen(QColor(0, 123, 255));
-    pen.setWidth(2);
-    pen.setCapStyle(Qt::RoundCap);
-    painter.setPen(pen);
-    painter.drawLine(5, 13, 11, 5);
-    QPolygonF tip;
-    tip << QPointF(11, 5) << QPointF(12, 4) << QPointF(13, 5) << QPointF(12, 6);
-    painter.setBrush(QColor(0, 123, 255));
+  const auto drawGlyph = [&](const QColor &color,
+                             const std::function<void()> &draw) {
+    painter.setBrush(color);
     painter.setPen(Qt::NoPen);
-    painter.drawPolygon(tip);
-    QPolygonF eraser;
-    eraser << QPointF(5, 13) << QPointF(4, 14) << QPointF(5, 15)
-           << QPointF(6, 14);
-    painter.drawPolygon(eraser);
+    painter.drawRoundedRect(pixmap.rect().adjusted(2, 2, -2, -2), 4, 4);
+    painter.setPen(
+        QPen(Qt::white, 2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    painter.setBrush(Qt::NoBrush);
+    draw();
+  };
+
+  if (status == "?") {
+    drawGlyph(QColor(108, 117, 125), [&]() {
+      painter.drawLine(8, 5, 8, 7);
+      painter.drawPoint(8, 11);
+    });
+  } else if (status == "A") {
+    drawGlyph(QColor(40, 167, 69), [&]() {
+      painter.drawLine(8, 4, 8, 12);
+      painter.drawLine(4, 8, 12, 8);
+    });
+  } else if (status == "M" || status == "T") {
+    drawGlyph(QColor(0, 123, 255), [&]() {
+      painter.drawLine(5, 12, 11, 5);
+      painter.drawLine(11, 5, 9, 5);
+      painter.drawLine(11, 5, 11, 7);
+    });
   } else if (status == "D") {
-    QPen pen(QColor(220, 53, 69));
-    pen.setWidth(2);
-    pen.setCapStyle(Qt::RoundCap);
-    painter.setPen(pen);
-    painter.drawLine(4, 8, 12, 8);
+    drawGlyph(QColor(220, 53, 69), [&]() { painter.drawLine(4, 8, 12, 8); });
+  } else if (status == "R") {
+    drawGlyph(QColor(156, 39, 176), [&]() {
+      painter.drawLine(4, 8, 12, 8);
+      painter.drawLine(9, 5, 12, 8);
+      painter.drawLine(9, 11, 12, 8);
+    });
+  } else if (status == "C") {
+    drawGlyph(QColor(0, 150, 136), [&]() {
+      painter.drawRect(4, 5, 4, 4);
+      painter.drawRect(7, 7, 4, 4);
+    });
+  } else if (status == "!" || status == "-") {
+    drawGlyph(QColor(108, 117, 125), [&]() {
+      painter.drawLine(5, 5, 11, 11);
+      painter.drawLine(11, 5, 5, 11);
+    });
   } else {
     painter.setBrush(QColor(160, 160, 160));
     painter.setPen(Qt::NoPen);

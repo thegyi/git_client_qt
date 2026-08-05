@@ -10,6 +10,7 @@
 #include "widgets/FileTreeWidget.h"
 
 #include <QMainWindow>
+#include <QMap>
 #include <QSettings>
 #include <QShortcut>
 #include <QStackedWidget>
@@ -33,6 +34,7 @@ class QTableWidget;
 class QTableWidgetItem;
 class QTreeWidgetItem;
 class QTabBar;
+class QTabWidget;
 class QSplitter;
 class QNetworkAccessManager;
 
@@ -111,6 +113,8 @@ private:
   void restoreSettings();
   void applyFonts();
   void savePullMode();
+  void restoreSelectedFiles();
+  void loadCommitMessageIntoEditor(const QString &sha);
   bool performPush(const QStringList &extraArgs);
   QString currentBranchName() const;
   bool isHeadPushed() const;
@@ -208,7 +212,13 @@ private:
   QTreeWidget *m_grepResults = nullptr;
   QNetworkAccessManager *m_networkManager = nullptr;
   QTabBar *m_repoTabBar = nullptr;
+  QTabWidget *m_viewTabWidget = nullptr;
   QSplitter *m_mainSplitter = nullptr;
+  QMap<QString, QString> m_repoSelectedShas;
+  QMap<QString, int> m_repoHorizontalScroll;
+  QMap<QString, QString> m_repoUnstagedFile;
+  QMap<QString, QString> m_repoStagedFile;
+  QMap<QString, QString> m_repoCommitFile;
 };
 
 #endif // MAINWINDOW_H

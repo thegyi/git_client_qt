@@ -1,9 +1,11 @@
 #include "DiffViewWidget.h"
+#include "Theme.h"
 
 DiffViewWidget::DiffViewWidget(QWidget *parent) : QTextBrowser(parent) {
   setReadOnly(true);
   setOpenLinks(false);
   setOpenExternalLinks(false);
+  setFont(Theme::monospaceFont());
 }
 
 void DiffViewWidget::setDiffHtml(const QString &html) { setHtml(html); }
