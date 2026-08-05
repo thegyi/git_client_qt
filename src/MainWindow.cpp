@@ -787,8 +787,11 @@ MainWindow::MainWindow(QWidget *parent)
   rightLayout->addWidget(messageGroup);
 
   auto *commitFilesGroup = new QGroupBox(tr("Commit Files"), this);
+  commitFilesGroup->setSizePolicy(QSizePolicy::Expanding,
+                                  QSizePolicy::Expanding);
   auto *commitFilesLayout = new QVBoxLayout(commitFilesGroup);
   m_commitFilesTree = new FileTreeWidget(QString(), this);
+  m_commitFilesTree->setMinimumHeight(150);
   connect(m_commitFilesTree, &QTreeWidget::customContextMenuRequested, this,
           &MainWindow::showCommitFilesContextMenu);
   connect(m_commitFilesTree, &QTreeWidget::itemClicked, this,
@@ -799,7 +802,7 @@ MainWindow::MainWindow(QWidget *parent)
 
   rightLayout->setStretchFactor(unstagedGroup, 2);
   rightLayout->setStretchFactor(stagedGroup, 2);
-  rightLayout->setStretchFactor(commitFilesGroup, 1);
+  rightLayout->setStretchFactor(commitFilesGroup, 2);
 
   rightDock->setWidget(rightWidget);
   rightDock->setTitleBarWidget(new QWidget(rightDock));
