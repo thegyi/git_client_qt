@@ -74,6 +74,7 @@
 #include <QRegularExpression>
 #include <QRegularExpressionMatch>
 #include <QStatusBar>
+#include <QTabBar>
 #include <QTabWidget>
 #include <QTemporaryFile>
 #include <QTextEdit>
@@ -675,7 +676,22 @@ MainWindow::MainWindow(QWidget *parent)
   m_centralStack->addWidget(welcomeWidget);
   m_centralStack->addWidget(m_commitTable);
   m_centralStack->setCurrentIndex(0);
-  setCentralWidget(m_centralStack);
+
+  m_repoTabBar = new QTabBar(this);
+  m_repoTabBar->setTabsClosable(true);
+  m_repoTabBar->setVisible(false);
+  connect(m_repoTabBar, &QTabBar::currentChanged, this,
+          &MainWindow::onRepositoryTabChanged);
+  connect(m_repoTabBar, &QTabBar::tabCloseRequested, this,
+          &MainWindow::onRepositoryTabCloseRequested);
+
+  auto *centralContainer = new QWidget(this);
+  auto *centralLayout = new QVBoxLayout(centralContainer);
+  centralLayout->setContentsMargins(0, 0, 0, 0);
+  centralLayout->setSpacing(0);
+  centralLayout->addWidget(m_repoTabBar);
+  centralLayout->addWidget(m_centralStack);
+  setCentralWidget(centralContainer);
 
   m_repoPanel = new RepoPanelWidget(this);
   connect(
@@ -996,15 +1012,19 @@ MainWindow::MainWindow(QWidget *parent)
 
 MainWindow::~MainWindow() {
   saveDockAndColumnState();
+  saveOpenTabs();
   delete ui;
 }
 
 void MainWindow::restoreSettings() {
   QSettings settings("GitClientQt", "GitClientQt");
   if (settings.value("reopenLastRepo", true).toBool()) {
-    const QString lastRepo = settings.value("lastRepo").toString();
-    if (!lastRepo.isEmpty() && m_currentPath.isEmpty())
-      m_currentPath = lastRepo;
+    if (!settings.value("openRepos").toStringList().isEmpty() &&
+        m_currentPath.isEmpty())
+      restoreOpenTabs();
+    else if (!settings.value("lastRepo").toString().isEmpty() &&
+             m_currentPath.isEmpty())
+      m_currentPath = settings.value("lastRepo").toString();
   }
 
   const QString pullMode =
@@ -1079,7 +1099,8 @@ void MainWindow::saveDockAndColumnState(bool includeGeometry) {
       widths << m_commitTable->columnWidth(c);
     qDebug() << "saveDockAndColumnState" << m_currentPath << repoKey
              << "commitTable widths:" << widths;
-    settings.setValue(base + QLatin1String("columnWidths/commitTable"), widths);
+    settings.setValue(
+        QLatin1String("dockLayouts/global/columnWidths/commitTable"), widths);
   }
   if (m_unstagedTree)
     settings.setValue(base + QLatin1String("headers/unstagedTree"),
@@ -1095,7 +1116,8 @@ void MainWindow::saveDockAndColumnState(bool includeGeometry) {
                       m_grepResults->header()->saveState());
 }
 
-void MainWindow::restoreDockAndColumnState(bool includeGeometry) {
+bool MainWindow::restoreDockAndColumnState(bool includeGeometry) {
+  bool restoredCommitTableWidths = false;
   QSettings settings("GitClientQt", "GitClientQt");
 
   if (includeGeometry) {
@@ -1164,13 +1186,17 @@ void MainWindow::restoreDockAndColumnState(bool includeGeometry) {
 
   if (m_commitTable) {
     const QVariantList widths =
-        settings.value(base + QLatin1String("columnWidths/commitTable"))
+        settings
+            .value(QLatin1String("dockLayouts/global/columnWidths/commitTable"))
             .toList();
     qDebug() << "restoreDockAndColumnState" << m_currentPath << repoKey
              << "commitTable widths:" << widths;
     for (int c = 0; c < widths.size() && c < m_commitTable->columnCount(); ++c)
       m_commitTable->setColumnWidth(c, widths.at(c).toInt());
+    restoredCommitTableWidths = !widths.isEmpty();
   }
+
+  return restoredCommitTableWidths;
 }
 
 void MainWindow::showPreferences() {
@@ -1497,11 +1523,12 @@ bool MainWindow::repositoryStateChanged() const {
   return m_gitRepository->stateSignature() != m_lastRepoSignature;
 }
 
-void MainWindow::loadRepository(const QString &path) {
+void MainWindow::loadRepository(const QString &path, bool updateTab) {
   if (path.isEmpty())
     return;
 
-  if (!m_currentPath.isEmpty() && m_currentPath != path)
+  const bool switchingRepo = !m_currentPath.isEmpty() && m_currentPath != path;
+  if (switchingRepo)
     saveDockAndColumnState(false);
 
   m_gitRepository->setPath(path);
@@ -1519,8 +1546,8 @@ void MainWindow::loadRepository(const QString &path) {
   }
   m_currentPath = repoRoot;
   m_gitRepository->setPath(m_currentPath);
-  if (!isInitialLoad)
-    restoreDockAndColumnState(false);
+  if (updateTab)
+    activateRepositoryTab(m_currentPath);
   if (m_centralStack)
     m_centralStack->setCurrentIndex(1);
   if (m_watcher) {
@@ -1648,12 +1675,12 @@ void MainWindow::loadRepository(const QString &path) {
   loadWorktrees();
   m_worktreesItem->setExpanded(true);
 
-  m_commitTable->clear();
   m_commitTable->setRowCount(0);
   m_commitTable->setHorizontalHeaderLabels(
       {tr("Graph"), tr("Date/Time"), tr("Date"), tr("Commit Message"),
        tr("Author"), tr("Branches"), tr("SHA")});
   m_commitTable->horizontalHeader()->setVisible(true);
+  m_commitTable->horizontalHeader()->viewport()->update();
 
   QMap<QString, int> wipCounts;
   for (const QString &line :
@@ -1894,12 +1921,15 @@ void MainWindow::loadRepository(const QString &path) {
       m_commitTable->setItem(row, 6, shaItem);
     }
   }
-  if (!m_commitTableWidthInitialized) {
+  const bool restoredCommitTableWidths =
+      !isInitialLoad ? restoreDockAndColumnState(false) : false;
+  if (!restoredCommitTableWidths) {
     m_commitTable->resizeColumnsToContents();
-    m_commitTableWidthInitialized = true;
+    m_commitTable->setColumnWidth(0, qMax(100, graphColumnWidth + 16));
   }
-  m_commitTable->setColumnWidth(
-      0, qMax(m_commitTable->columnWidth(0), qMax(100, graphColumnWidth + 16)));
+
+  if (!m_currentPath.isEmpty())
+    saveDockAndColumnState(false);
 
   const int tableWidth =
       m_commitTable->horizontalHeader()->length() +
@@ -5140,6 +5170,91 @@ void MainWindow::applyPatch() {
     statusBar()->showMessage(tr("Patch applied"));
   } else {
     statusBar()->showMessage(tr("Failed to apply patch"));
+  }
+}
+
+void MainWindow::activateRepositoryTab(const QString &path) {
+  if (!m_repoTabBar || path.isEmpty())
+    return;
+
+  const bool oldBlock = m_repoTabBar->blockSignals(true);
+  int index = -1;
+  for (int i = 0; i < m_repoTabBar->count(); ++i) {
+    if (m_repoTabBar->tabData(i).toString() == path) {
+      index = i;
+      break;
+    }
+  }
+
+  if (index == -1) {
+    index = m_repoTabBar->addTab(QFileInfo(path).fileName());
+    m_repoTabBar->setTabData(index, path);
+    m_repoTabBar->setTabToolTip(index, path);
+  }
+
+  m_repoTabBar->setCurrentIndex(index);
+  m_repoTabBar->setVisible(true);
+  m_repoTabBar->blockSignals(oldBlock);
+}
+
+void MainWindow::onRepositoryTabChanged(int index) {
+  if (index < 0) {
+    m_currentPath.clear();
+    if (m_centralStack)
+      m_centralStack->setCurrentIndex(0);
+    if (m_repoTabBar)
+      m_repoTabBar->setVisible(false);
+    setWindowTitle(tr("Git Client Qt"));
+    if (m_pushButton)
+      m_pushButton->setEnabled(false);
+    if (m_undoButton)
+      m_undoButton->setEnabled(false);
+    if (m_pullButton)
+      m_pullButton->setEnabled(false);
+    return;
+  }
+
+  const QString path = m_repoTabBar->tabData(index).toString();
+  if (path == m_currentPath)
+    return;
+  loadRepository(path, false);
+}
+
+void MainWindow::onRepositoryTabCloseRequested(int index) {
+  if (m_repoTabBar)
+    m_repoTabBar->removeTab(index);
+}
+
+void MainWindow::saveOpenTabs() {
+  QSettings settings("GitClientQt", "GitClientQt");
+  QStringList openPaths;
+  for (int i = 0; i < m_repoTabBar->count(); ++i)
+    openPaths << m_repoTabBar->tabData(i).toString();
+  settings.setValue(QLatin1String("openRepos"), openPaths);
+  settings.setValue(QLatin1String("activeRepo"), m_currentPath);
+}
+
+void MainWindow::restoreOpenTabs() {
+  QSettings settings("GitClientQt", "GitClientQt");
+  const QStringList openRepos =
+      settings.value(QLatin1String("openRepos")).toStringList();
+  if (openRepos.isEmpty())
+    return;
+
+  const QString activeRepo =
+      settings.value(QLatin1String("activeRepo")).toString();
+  if (m_currentPath.isEmpty())
+    m_currentPath = activeRepo.isEmpty() ? openRepos.first() : activeRepo;
+
+  if (m_repoTabBar) {
+    const bool oldBlock = m_repoTabBar->blockSignals(true);
+    for (const QString &path : openRepos) {
+      const int index = m_repoTabBar->addTab(QFileInfo(path).fileName());
+      m_repoTabBar->setTabData(index, path);
+      m_repoTabBar->setTabToolTip(index, path);
+    }
+    m_repoTabBar->setVisible(m_repoTabBar->count() > 0);
+    m_repoTabBar->blockSignals(oldBlock);
   }
 }
 

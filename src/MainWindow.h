@@ -32,6 +32,7 @@ class QTreeWidget;
 class QTableWidget;
 class QTableWidgetItem;
 class QTreeWidgetItem;
+class QTabBar;
 class QNetworkAccessManager;
 
 QT_BEGIN_NAMESPACE
@@ -88,6 +89,8 @@ private slots:
   void bisectBad();
   void bisectSkip();
   void bisectReset();
+  void onRepositoryTabChanged(int index);
+  void onRepositoryTabCloseRequested(int index);
   void checkForUpdates();
   void lfsTrack();
   void lfsUntrack();
@@ -95,7 +98,8 @@ private slots:
   void lfsPush();
 
 private:
-  void loadRepository(const QString &path);
+  void loadRepository(const QString &path, bool updateTab = true);
+  void activateRepositoryTab(const QString &path);
   bool repositoryStateChanged() const;
   void showHunkStaging(const QString &path, bool unstage);
   void onDiffAnchorClicked(const QUrl &link);
@@ -104,7 +108,9 @@ private:
   void savePullMode();
   void loadWorkingTree();
   void saveDockAndColumnState(bool includeGeometry = true);
-  void restoreDockAndColumnState(bool includeGeometry = true);
+  void saveOpenTabs();
+  void restoreOpenTabs();
+  bool restoreDockAndColumnState(bool includeGeometry = true);
   void onGrepRequested();
   void diffWithCommit(const QString &fromSha);
   void diffWithRemote();
@@ -176,7 +182,6 @@ private:
   QMenu *m_recentMenu = nullptr;
   QStringList m_pullArgs;
   QStringList m_pushArgs;
-  bool m_commitTableWidthInitialized = false;
   QLineEdit *m_filterEdit = nullptr;
   QDockWidget *m_repoDock = nullptr;
   QDockWidget *m_workTreeDock = nullptr;
@@ -187,6 +192,7 @@ private:
   QLineEdit *m_grepEdit = nullptr;
   QTreeWidget *m_grepResults = nullptr;
   QNetworkAccessManager *m_networkManager = nullptr;
+  QTabBar *m_repoTabBar = nullptr;
 };
 
 #endif // MAINWINDOW_H
