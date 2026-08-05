@@ -80,6 +80,13 @@
 #include <QToolBar>
 #include <QVBoxLayout>
 
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QVersionNumber>
+
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent), ui(new Ui::MainWindow) {
   m_gitExecutor = new GitExecutor(this);
@@ -150,6 +157,13 @@ MainWindow::MainWindow(QWidget *parent)
   if (ui->menuHelp) {
     menuBar()->removeAction(ui->menuHelp->menuAction());
     menuBar()->addAction(ui->menuHelp->menuAction());
+
+    auto *checkForUpdatesAction =
+        ui->menuHelp->addAction(tr("&Check for Updates..."));
+    checkForUpdatesAction->setStatusTip(
+        tr("Check GitHub for the latest release"));
+    connect(checkForUpdatesAction, &QAction::triggered, this,
+            &MainWindow::checkForUpdates);
   }
 
   auto *repoSettingsAction = repositoryMenu->addAction(tr("Settings..."));
@@ -3377,6 +3391,75 @@ void MainWindow::undoLastCommit() {
       statusBar()->showMessage(tr("Failed to undo last commit"));
     }
   }
+}
+
+void MainWindow::checkForUpdates() {
+  if (!m_networkManager)
+    m_networkManager = new QNetworkAccessManager(this);
+
+  const QString url =
+      QStringLiteral("https://api.github.com/repos/thegyi/git_client_qt/"
+                     "releases/latest");
+  QNetworkRequest request{QUrl(url)};
+  request.setHeader(QNetworkRequest::UserAgentHeader,
+                    QStringLiteral("GitClientQt"));
+  request.setRawHeader(QByteArrayLiteral("Accept"),
+                       QByteArrayLiteral("application/vnd.github+json"));
+
+  QNetworkReply *reply = m_networkManager->get(request);
+  statusBar()->showMessage(tr("Checking for updates..."));
+
+  connect(reply, &QNetworkReply::finished, this, [this, reply] {
+    statusBar()->clearMessage();
+
+    if (reply->error() != QNetworkReply::NoError) {
+      QMessageBox::warning(this, tr("Update check failed"),
+                           reply->errorString());
+      reply->deleteLater();
+      return;
+    }
+
+    const QJsonObject release =
+        QJsonDocument::fromJson(reply->readAll()).object();
+    const QString tag = release.value(QStringLiteral("tag_name")).toString();
+    const QString htmlUrl =
+        release.value(QStringLiteral("html_url")).toString();
+    const QString latestVersion =
+        (tag.startsWith(QLatin1Char('v')) || tag.startsWith(QLatin1Char('V')))
+            ? tag.mid(1)
+            : tag;
+    reply->deleteLater();
+
+    if (latestVersion.isEmpty()) {
+      QMessageBox::warning(this, tr("Update check failed"),
+                           tr("Could not parse the latest release version."));
+      return;
+    }
+
+    const QVersionNumber current =
+        QVersionNumber::fromString(QStringLiteral(APP_VERSION));
+    const QVersionNumber latest = QVersionNumber::fromString(latestVersion);
+
+    if (latest > current) {
+      if (QMessageBox::information(
+              this, tr("Update available"),
+              tr("Version %1 is available.\n\nCurrent version: %2")
+                  .arg(tag, QStringLiteral(APP_VERSION)),
+              QMessageBox::Open | QMessageBox::Close,
+              QMessageBox::Close) == QMessageBox::Open) {
+        QDesktopServices::openUrl(QUrl(htmlUrl));
+      }
+    } else if (latest == current) {
+      QMessageBox::information(this, tr("Up to date"),
+                               tr("You are running the latest version (%1).")
+                                   .arg(QStringLiteral(APP_VERSION)));
+    } else {
+      QMessageBox::information(
+          this, tr("Up to date"),
+          tr("You are running a newer or development version (%1).")
+              .arg(QStringLiteral(APP_VERSION)));
+    }
+  });
 }
 
 void MainWindow::onInitRepository() {
