@@ -2091,7 +2091,8 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
               QStringList{"log", "--all", "--graph", "--source", "--date-order",
                           "--date=format:%Y-%m-%d %H:%M:%S",
                           "--pretty=format:%x1f%H%x1f%h%x1f%an%x1f%ad%x1f%ar%"
-                          "x1f%s%x1f%b%x1f%S%x1e"});
+                          "x1f%s%x1f%b%x1f%S%x1e",
+                          QStringLiteral("^refs/stash")});
   if (p.waitForFinished(10000) && p.exitCode() == 0) {
     const QString output =
         QString::fromLocal8Bit(p.readAllStandardOutput().trimmed());
