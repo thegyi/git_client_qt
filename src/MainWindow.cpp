@@ -14,6 +14,7 @@
 #include <QApplication>
 #include <QByteArray>
 #include <QCheckBox>
+#include <QClipboard>
 #include <QColorDialog>
 #include <QComboBox>
 #include <QCryptographicHash>
@@ -59,6 +60,7 @@
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
+#include <QUrl>
 #include <QVector>
 
 #include <QDateTime>
@@ -468,7 +470,8 @@ MainWindow::MainWindow(QWidget *parent)
     const QString remote = QInputDialog::getItem(
         this, tr("Fetch from Remote"), tr("Remote:"), remotes, 0, false, &ok);
     if (ok && !remote.isEmpty()) {
-      if (m_gitExecutor->exec(m_currentPath, {"fetch", remote})) {
+      if (execGitWithProgress(m_currentPath, {"fetch", remote},
+                              tr("Fetching from %1...").arg(remote))) {
         loadRepository(m_currentPath);
         statusBar()->showMessage(tr("Fetched from %1").arg(remote));
       } else {
@@ -1441,6 +1444,29 @@ void MainWindow::showPreferences() {
   generalLayout->addRow(tr("Protected branches:"), protectedBranchesEdit);
   tabs->addTab(generalTab, tr("General"));
 
+  auto *toolsTab = new QWidget(&dlg);
+  auto *toolsLayout = new QFormLayout(toolsTab);
+
+  auto *editorEdit = new QLineEdit(&dlg);
+  editorEdit->setPlaceholderText(tr("e.g., code -g"));
+  editorEdit->setText(
+      settings.value(QStringLiteral("external/editor")).toString());
+  auto *diffToolEdit = new QLineEdit(&dlg);
+  diffToolEdit->setPlaceholderText(
+      tr("Tool name or command (overrides git diff.tool)"));
+  diffToolEdit->setText(
+      settings.value(QStringLiteral("external/diffTool")).toString());
+  auto *mergeToolEdit = new QLineEdit(&dlg);
+  mergeToolEdit->setPlaceholderText(
+      tr("Tool name or command (overrides git merge.tool)"));
+  mergeToolEdit->setText(
+      settings.value(QStringLiteral("external/mergeTool")).toString());
+
+  toolsLayout->addRow(tr("External editor command:"), editorEdit);
+  toolsLayout->addRow(tr("Diff tool:"), diffToolEdit);
+  toolsLayout->addRow(tr("Merge tool:"), mergeToolEdit);
+  tabs->addTab(toolsTab, tr("External Tools"));
+
   auto *themeTab = new QWidget(&dlg);
   auto *themeLayout = new QVBoxLayout(themeTab);
 
@@ -1727,6 +1753,13 @@ void MainWindow::showPreferences() {
   }
 
   settings.setValue("gpgSigningKey", gpgKeyEdit->text().trimmed());
+
+  settings.setValue(QStringLiteral("external/editor"),
+                    editorEdit->text().trimmed());
+  settings.setValue(QStringLiteral("external/diffTool"),
+                    diffToolEdit->text().trimmed());
+  settings.setValue(QStringLiteral("external/mergeTool"),
+                    mergeToolEdit->text().trimmed());
 
   QStringList protectedBranches;
   for (const QString &part :
@@ -2136,14 +2169,23 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
       }
       preview += markers;
 
-      const QString tip =
-          tr("Subject: %1\n\n%2\n\nDate: %3\nAuthor: %4\nSHA: %5 (%6)")
-              .arg(c.subject)
-              .arg(c.body)
-              .arg(c.date)
-              .arg(c.author)
-              .arg(c.shortSha)
-              .arg(c.fullSha);
+      QString branchText;
+      if (branchSet.contains(c.branch) && !tagSet.contains(c.branch))
+        branchText = c.branch;
+      else if (localShas.contains(c.fullSha))
+        branchText = currentBranch;
+      else if (!m_remoteHeadSha.isEmpty() && remoteShas.contains(c.fullSha))
+        branchText = m_remoteBranchName;
+
+      const QString tip = tr("Subject: %1\n\n%2\n\nDate: %3\nAuthor: "
+                             "%4\nBranch: %5\nSHA: %6 (%7)")
+                              .arg(c.subject)
+                              .arg(c.body)
+                              .arg(c.date)
+                              .arg(c.author)
+                              .arg(branchText)
+                              .arg(c.shortSha)
+                              .arg(c.fullSha);
 
       QBrush bgBrush;
       if (m_unpushedShas.contains(c.fullSha))
@@ -2191,13 +2233,6 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
         authorItem->setBackground(bgBrush);
       m_commitTable->setItem(row, 4, authorItem);
 
-      QString branchText;
-      if (branchSet.contains(c.branch) && !tagSet.contains(c.branch))
-        branchText = c.branch;
-      else if (localShas.contains(c.fullSha))
-        branchText = currentBranch;
-      else if (!m_remoteHeadSha.isEmpty() && remoteShas.contains(c.fullSha))
-        branchText = m_remoteBranchName;
       auto *branchItem = new QTableWidgetItem(branchText);
       branchItem->setToolTip(tip);
       if (bgBrush != QBrush())
@@ -2206,6 +2241,8 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
 
       auto *shaItem = new QTableWidgetItem(c.shortSha);
       shaItem->setData(Qt::UserRole, c.fullSha);
+      shaItem->setData(Qt::UserRole + 1, c.subject);
+      shaItem->setData(Qt::UserRole + 2, c.author);
       shaItem->setToolTip(tip);
       shaItem->setFont(Theme::monospaceFont());
       if (bgBrush != QBrush())
@@ -2288,20 +2325,63 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
   statusBar()->showMessage(tr("Loaded: %1").arg(path));
 }
 
+void MainWindow::openInExternalEditor(const QString &filePath) const {
+  QSettings settings("GitClientQt", "GitClientQt");
+  const QString editor =
+      settings.value(QStringLiteral("external/editor")).toString().trimmed();
+  if (editor.isEmpty()) {
+    QDesktopServices::openUrl(QUrl::fromLocalFile(filePath));
+    return;
+  }
+
+  QStringList tokens = editor.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+  if (tokens.isEmpty())
+    return;
+  const QString program = tokens.takeFirst();
+  tokens.append(filePath);
+  if (!QProcess::startDetached(program, tokens))
+    const_cast<MainWindow *>(this)->statusBar()->showMessage(
+        tr("Failed to start external editor"));
+}
+
+QString MainWindow::configuredDiffTool() const {
+  QSettings settings("GitClientQt", "GitClientQt");
+  QString userTool =
+      settings.value(QStringLiteral("external/diffTool")).toString().trimmed();
+  if (!userTool.isEmpty())
+    return userTool;
+  if (m_currentPath.isEmpty())
+    return QString();
+  return m_gitExecutor->run(m_currentPath, {"config", "diff.tool"}).value(0);
+}
+
+QString MainWindow::configuredMergeTool() const {
+  QSettings settings("GitClientQt", "GitClientQt");
+  QString userTool =
+      settings.value(QStringLiteral("external/mergeTool")).toString().trimmed();
+  if (!userTool.isEmpty())
+    return userTool;
+  if (m_currentPath.isEmpty())
+    return QString();
+  return m_gitExecutor->run(m_currentPath, {"config", "merge.tool"}).value(0);
+}
+
 void MainWindow::launchGitTool(const QStringList &args, bool reload) {
   if (m_currentPath.isEmpty() || args.isEmpty())
     return;
 
   const QString command = args.first();
-  QString configKey;
-  if (command == QStringLiteral("difftool"))
-    configKey = QStringLiteral("diff.tool");
-  else if (command == QStringLiteral("mergetool"))
-    configKey = QStringLiteral("merge.tool");
-  if (!configKey.isEmpty() &&
-      m_gitExecutor->run(m_currentPath, {"config", configKey}).isEmpty()) {
-    statusBar()->showMessage(
-        tr("No %1 configured in Repository Settings").arg(configKey));
+  QString toolName;
+  QString envName;
+  if (command == QStringLiteral("difftool")) {
+    toolName = configuredDiffTool();
+    envName = QStringLiteral("GIT_DIFF_TOOL");
+  } else if (command == QStringLiteral("mergetool")) {
+    toolName = configuredMergeTool();
+    envName = QStringLiteral("GIT_MERGE_TOOL");
+  }
+  if (!envName.isEmpty() && toolName.isEmpty()) {
+    statusBar()->showMessage(tr("No %1 tool configured").arg(command));
     return;
   }
 
@@ -2309,6 +2389,8 @@ void MainWindow::launchGitTool(const QStringList &args, bool reload) {
   p->setWorkingDirectory(m_currentPath);
   QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
   env.insert(QStringLiteral("GIT_EDITOR"), QStringLiteral("true"));
+  if (!envName.isEmpty())
+    env.insert(envName, toolName);
   p->setProcessEnvironment(env);
   connect(p, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
           this, [this, p, reload](int, QProcess::ExitStatus) {
@@ -2397,7 +2479,9 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
       const QString ref = (destBranch == branchName)
                               ? branchName
                               : branchName + ":" + destBranch;
-      if (m_gitExecutor->exec(m_currentPath, {"push", "-u", remote, ref})) {
+      if (execGitWithProgress(
+              m_currentPath, {"push", "-u", remote, ref},
+              tr("Pushing %1 to %2...").arg(branchName, remote))) {
         loadRepository(m_currentPath);
         statusBar()->showMessage(
             tr("Pushed %1 to %2/%3").arg(branchName, remote, destBranch));
@@ -2700,7 +2784,9 @@ void MainWindow::showTagContextMenu(const QPoint &pos) {
             QInputDialog::getItem(this, tr("Push Tag %1").arg(tagName),
                                   tr("Remote:"), remotes, 0, false, &okRemote);
         if (okRemote && !remote.isEmpty()) {
-          if (m_gitExecutor->exec(m_currentPath, {"push", remote, tagName})) {
+          if (execGitWithProgress(
+                  m_currentPath, {"push", remote, tagName},
+                  tr("Pushing tag %1 to %2...").arg(tagName, remote))) {
             statusBar()->showMessage(
                 tr("Pushed tag %1 to %2").arg(tagName, remote));
           } else {
@@ -2737,9 +2823,11 @@ void MainWindow::showTagContextMenu(const QPoint &pos) {
             }
           }
           if (!remoteToDelete.isEmpty()) {
-            if (!m_gitExecutor->exec(
-                    m_currentPath, {"push", remoteToDelete,
-                                    QStringLiteral(":refs/tags/") + tagName})) {
+            if (!execGitWithProgress(m_currentPath,
+                                     {"push", remoteToDelete,
+                                      QStringLiteral(":refs/tags/") + tagName},
+                                     tr("Deleting tag %1 from %2...")
+                                         .arg(tagName, remoteToDelete))) {
               QMessageBox::warning(this, tr("Remote tag delete failed"),
                                    tr("Failed to delete tag %1 from remote %2.")
                                        .arg(tagName, remoteToDelete));
@@ -3297,10 +3385,17 @@ void MainWindow::showUnstagedContextMenu(const QPoint &pos) {
     stageHunksAction = menu.addAction(tr("Stage &hunks"));
   }
   QAction *externalDiffAction = nullptr;
-  if (!isFolder && hasTracked &&
-      !m_gitExecutor->run(m_currentPath, {"config", "diff.tool"}).isEmpty()) {
+  if (!isFolder && hasTracked && !configuredDiffTool().isEmpty()) {
     externalDiffAction = menu.addAction(tr("O&pen in external diff tool"));
   }
+
+  menu.addSeparator();
+  const QString fullPath = m_currentPath + QLatin1Char('/') + path;
+  QAction *openEditorAction = nullptr;
+  if (!isFolder)
+    openEditorAction = menu.addAction(tr("Open in &External Editor"));
+  auto *openFolderAction = menu.addAction(tr("Open Containing &Folder"));
+  auto *revertAction = menu.addAction(tr("&Revert to HEAD"));
 
   QAction *selected = menu.exec(m_unstagedTree->mapToGlobal(pos));
   if (!selected)
@@ -3344,6 +3439,23 @@ void MainWindow::showUnstagedContextMenu(const QPoint &pos) {
   } else if (selected == externalDiffAction) {
     launchGitTool({QStringLiteral("difftool"), QStringLiteral("-y"),
                    QStringLiteral("--"), path});
+  } else if (selected == openEditorAction) {
+    openInExternalEditor(fullPath);
+  } else if (selected == openFolderAction) {
+    QDesktopServices::openUrl(
+        QUrl::fromLocalFile(QFileInfo(fullPath).dir().absolutePath()));
+  } else if (selected == revertAction) {
+    bool ok = true;
+    if (hasTracked)
+      ok &=
+          m_gitExecutor->exec(m_currentPath, {"checkout", "HEAD", "--", path});
+    if (hasNew)
+      ok &= m_gitExecutor->exec(m_currentPath, {"clean", "-fd", "--", path});
+    if (ok) {
+      loadWorkingTree();
+      if (m_diffView)
+        showEmptyDiff();
+    }
   }
 }
 
@@ -3465,10 +3577,18 @@ void MainWindow::showStagedContextMenu(const QPoint &pos) {
     blameAction = menu.addAction(tr("&Blame"));
   }
   QAction *externalDiffAction = nullptr;
-  if (!isFolder &&
-      !m_gitExecutor->run(m_currentPath, {"config", "diff.tool"}).isEmpty()) {
+  if (!isFolder && !configuredDiffTool().isEmpty()) {
     externalDiffAction = menu.addAction(tr("O&pen in external diff tool"));
   }
+
+  menu.addSeparator();
+  const QString fullPath = m_currentPath + QLatin1Char('/') + path;
+  QAction *openEditorAction = nullptr;
+  if (!isFolder)
+    openEditorAction = menu.addAction(tr("Open in &External Editor"));
+  auto *openFolderAction = menu.addAction(tr("Open Containing &Folder"));
+  auto *revertAction = menu.addAction(tr("&Revert to HEAD"));
+
   QAction *selected = menu.exec(m_stagedTree->mapToGlobal(pos));
   if (!selected)
     return;
@@ -3483,6 +3603,17 @@ void MainWindow::showStagedContextMenu(const QPoint &pos) {
   } else if (selected == externalDiffAction) {
     launchGitTool({QStringLiteral("difftool"), QStringLiteral("-y"),
                    QStringLiteral("--cached"), QStringLiteral("--"), path});
+  } else if (selected == openEditorAction) {
+    openInExternalEditor(fullPath);
+  } else if (selected == openFolderAction) {
+    QDesktopServices::openUrl(
+        QUrl::fromLocalFile(QFileInfo(fullPath).dir().absolutePath()));
+  } else if (selected == revertAction) {
+    if (m_gitExecutor->exec(m_currentPath, {"checkout", "HEAD", "--", path})) {
+      loadWorkingTree();
+      if (m_diffView)
+        showEmptyDiff();
+    }
   }
 }
 
@@ -3514,11 +3645,37 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
   auto *resetAction = menu.addAction(tr("R&eset to this commit"));
   auto *savePatchAction = menu.addAction(tr("Sa&ve as patch..."));
 
+  menu.addSeparator();
+  auto *copyMenu = menu.addMenu(tr("Copy"));
+  auto *copyFullShaAction = copyMenu->addAction(tr("Full SHA"));
+  auto *copyShortShaAction = copyMenu->addAction(tr("Short SHA"));
+  auto *copySubjectAction = copyMenu->addAction(tr("Subject"));
+  auto *copyAuthorAction = copyMenu->addAction(tr("Author"));
+
   auto *undoLastCommitAction =
       sha == m_localHeadSha ? menu.addAction(tr("&Undo last commit (soft)"))
                             : nullptr;
 
   QAction *selected = menu.exec(m_commitTable->viewport()->mapToGlobal(pos));
+
+  if (selected == copyFullShaAction) {
+    QApplication::clipboard()->setText(sha);
+    return;
+  }
+  if (selected == copyShortShaAction) {
+    QApplication::clipboard()->setText(shaItem->text());
+    return;
+  }
+  if (selected == copySubjectAction) {
+    QApplication::clipboard()->setText(
+        shaItem->data(Qt::UserRole + 1).toString());
+    return;
+  }
+  if (selected == copyAuthorAction) {
+    QApplication::clipboard()->setText(
+        shaItem->data(Qt::UserRole + 2).toString());
+    return;
+  }
 
   if (selected == checkoutAction) {
     QString output;
@@ -3738,12 +3895,16 @@ void MainWindow::showCommitFilesContextMenu(const QPoint &pos) {
   const QString path = m_commitFilesTree->itemPath(item);
   QMenu menu(this);
   auto *externalDiffAction =
-      !m_gitExecutor->run(m_currentPath, {"config", "diff.tool"}).isEmpty()
+      !configuredDiffTool().isEmpty()
           ? menu.addAction(tr("&View diff in external diff tool"))
           : nullptr;
   if (externalDiffAction)
     menu.addSeparator();
   auto *blameAction = menu.addAction(tr("&Blame"));
+  menu.addSeparator();
+  const QString fullPath = m_currentPath + QLatin1Char('/') + path;
+  auto *openEditorAction = menu.addAction(tr("Open in &External Editor"));
+  auto *openFolderAction = menu.addAction(tr("Open Containing &Folder"));
   auto *selected = menu.exec(m_commitFilesTree->mapToGlobal(pos));
 
   if (selected == externalDiffAction) {
@@ -3752,6 +3913,11 @@ void MainWindow::showCommitFilesContextMenu(const QPoint &pos) {
                    QStringLiteral("--"), path});
   } else if (selected == blameAction) {
     showBlame(path, m_selectedCommitSha);
+  } else if (selected == openEditorAction) {
+    openInExternalEditor(fullPath);
+  } else if (selected == openFolderAction) {
+    QDesktopServices::openUrl(
+        QUrl::fromLocalFile(QFileInfo(fullPath).dir().absolutePath()));
   }
 }
 
@@ -3872,12 +4038,10 @@ void MainWindow::onCommitSelected(QTableWidgetItem *item) {
     if (!m_currentPath.isEmpty())
       m_repoSelectedShas[m_currentPath] = m_selectedCommitSha;
     showEmptyCommitFiles();
-    if (m_amendCheckBox && m_amendCheckBox->isChecked()) {
-      if (m_commitSubject)
-        m_commitSubject->clear();
-      if (m_commitBody)
-        m_commitBody->clear();
-    }
+    if (m_commitSubject)
+      m_commitSubject->clear();
+    if (m_commitBody)
+      m_commitBody->clear();
     return;
   }
 
@@ -4135,7 +4299,8 @@ void MainWindow::onCloneRepository() {
     return;
   }
 
-  if (m_gitExecutor->exec(parentDir, {"clone", url, repoName})) {
+  if (execGitWithProgress(parentDir, {"clone", url, repoName},
+                          tr("Cloning %1...").arg(repoName))) {
     loadRepository(localPath);
     statusBar()->showMessage(tr("Cloned %1").arg(repoName));
   } else {
@@ -5601,7 +5766,8 @@ void MainWindow::lfsUntrack() {
 void MainWindow::lfsPull() {
   if (m_currentPath.isEmpty())
     return;
-  if (m_gitExecutor->exec(m_currentPath, {"lfs", "pull"})) {
+  if (execGitWithProgress(m_currentPath, {"lfs", "pull"},
+                          tr("Pulling LFS objects..."))) {
     loadWorkingTree();
     statusBar()->showMessage(tr("LFS objects pulled"));
   } else {
@@ -5628,8 +5794,8 @@ void MainWindow::lfsPush() {
     return;
   }
 
-  if (m_gitExecutor->exec(m_currentPath,
-                          {"lfs", "push", remote, currentBranch})) {
+  if (execGitWithProgress(m_currentPath, {"lfs", "push", remote, currentBranch},
+                          tr("Pushing LFS objects to %1...").arg(remote))) {
     statusBar()->showMessage(tr("LFS objects pushed"));
   } else {
     statusBar()->showMessage(tr("Failed to push LFS objects"));
@@ -5893,4 +6059,49 @@ void MainWindow::createPatchFromCommit(const QString &sha) {
   } else {
     QMessageBox::warning(this, tr("Error"), tr("Could not write patch file."));
   }
+}
+
+bool MainWindow::execGitWithProgress(const QString &path,
+                                     const QStringList &args,
+                                     const QString &label, QString *output) {
+  QProgressDialog progress(label, tr("Cancel"), 0, 0, this);
+  progress.setWindowModality(Qt::WindowModal);
+  progress.setMinimumDuration(0);
+
+  QProcess p;
+  p.setWorkingDirectory(path);
+  QString allOutput;
+  bool canceled = false;
+
+  connect(&p, &QProcess::readyReadStandardOutput, this, [&]() {
+    allOutput += QString::fromLocal8Bit(p.readAllStandardOutput());
+  });
+  connect(&p, &QProcess::readyReadStandardError, this, [&]() {
+    allOutput += QString::fromLocal8Bit(p.readAllStandardError());
+  });
+  connect(&p, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+          &progress, &QProgressDialog::close);
+  connect(&p, &QProcess::errorOccurred, &progress, &QProgressDialog::close);
+  connect(&progress, &QProgressDialog::canceled, &p, &QProcess::kill);
+  connect(&progress, &QProgressDialog::canceled, this,
+          [&]() { canceled = true; });
+
+  p.start(QStringLiteral("git"), args);
+  if (!p.waitForStarted(5000)) {
+    if (output)
+      *output = tr("Could not start git process");
+    return false;
+  }
+
+  progress.exec();
+
+  if (canceled) {
+    if (output)
+      *output = tr("Canceled");
+    return false;
+  }
+
+  if (output)
+    *output = allOutput;
+  return p.exitCode() == 0;
 }

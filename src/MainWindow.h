@@ -119,6 +119,8 @@ private:
   QString currentBranchName() const;
   bool isHeadPushed() const;
   bool isProtectedBranch(const QString &branch) const;
+  bool execGitWithProgress(const QString &path, const QStringList &args,
+                           const QString &label, QString *output = nullptr);
   void updateAmendWarning();
   void loadWorkingTree();
   void saveDockAndColumnState(bool includeGeometry = true);
@@ -132,6 +134,9 @@ private:
   void showBlame(const QString &path, const QString &revision = QString());
   void showEmptyDiff();
   void showErrorDiff(const QString &message);
+  void openInExternalEditor(const QString &filePath) const;
+  QString configuredDiffTool() const;
+  QString configuredMergeTool() const;
   void showEmptyCommitFiles();
   void showErrorCommitFiles(const QString &message);
   void launchGitTool(const QStringList &args, bool reload = false);
