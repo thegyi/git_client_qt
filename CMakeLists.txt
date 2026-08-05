@@ -66,6 +66,9 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt${QT_VERSION_MAJOR}::Concurrent
 )
 
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+    APP_VERSION="${PROJECT_VERSION}")
+
 install(TARGETS ${PROJECT_NAME}
         RUNTIME DESTINATION bin
         BUNDLE DESTINATION .)

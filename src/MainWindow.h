@@ -32,6 +32,7 @@ class QTreeWidget;
 class QTableWidget;
 class QTableWidgetItem;
 class QTreeWidgetItem;
+class QNetworkAccessManager;
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -87,6 +88,7 @@ private slots:
   void bisectBad();
   void bisectSkip();
   void bisectReset();
+  void checkForUpdates();
   void lfsTrack();
   void lfsUntrack();
   void lfsPull();
@@ -184,6 +186,7 @@ private:
   QDockWidget *m_diffDock = nullptr;
   QLineEdit *m_grepEdit = nullptr;
   QTreeWidget *m_grepResults = nullptr;
+  QNetworkAccessManager *m_networkManager = nullptr;
 };
 
 #endif // MAINWINDOW_H
