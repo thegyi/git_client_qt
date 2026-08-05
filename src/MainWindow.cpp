@@ -46,6 +46,7 @@
 #include <QProcessEnvironment>
 #include <QScreen>
 #include <QScrollBar>
+#include <QSet>
 #include <QSettings>
 #include <QShortcut>
 #include <QSpinBox>
@@ -1965,8 +1966,27 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
   m_remotesItem->setExpanded(true);
 
   m_tagsItem = new QTreeWidgetItem(m_repoPanel, {tr("Tags")});
+  const QStringList remotes = m_gitExecutor->run(path, {"remote"});
+  QSet<QString> remoteTags;
+  for (const QString &remote : remotes) {
+    for (const QString &line :
+         m_gitExecutor->run(path, {"ls-remote", "--tags", remote})) {
+      const QString ref = line.section(QLatin1Char('\t'), 1, 1);
+      if (ref.startsWith(QLatin1String("refs/tags/"))) {
+        QString tag = ref.mid(10);
+        if (tag.endsWith(QLatin1String("^{}")))
+          tag.chop(3);
+        remoteTags.insert(tag);
+      }
+    }
+  }
   for (const QString &tag : m_gitExecutor->run(path, {"tag", "--list"})) {
-    new QTreeWidgetItem(m_tagsItem, QStringList{tag});
+    auto *tagItem = new QTreeWidgetItem(m_tagsItem, QStringList{tag});
+    if (!remoteTags.contains(tag)) {
+      tagItem->setText(0, tag + tr(" (local)"));
+      tagItem->setForeground(0, QColor(160, 160, 160));
+    }
+    tagItem->setData(0, Qt::UserRole, tag);
   }
   m_tagsItem->setExpanded(true);
 
@@ -2759,9 +2779,19 @@ void MainWindow::showTagContextMenu(const QPoint &pos) {
       }
     }
   } else if (item->parent() == m_tagsItem) {
-    const QString tagName = item->text(0);
+    const QString tagName = item->data(0, Qt::UserRole).toString();
     auto *checkoutAction = menu.addAction(tr("Ch&eckout Tag %1").arg(tagName));
-    auto *pushAction = menu.addAction(tr("&Push Tag %1").arg(tagName));
+    const QStringList remotes = m_gitExecutor->run(m_currentPath, {"remote"});
+    QStringList pushableRemotes;
+    for (const QString &remote : remotes) {
+      if (m_gitExecutor
+              ->run(m_currentPath, {"ls-remote", "--tags", remote, tagName})
+              .isEmpty())
+        pushableRemotes.append(remote);
+    }
+    auto *pushAction = pushableRemotes.isEmpty()
+                           ? nullptr
+                           : menu.addAction(tr("&Push Tag %1").arg(tagName));
     auto *deleteAction = menu.addAction(tr("&Delete Tag %1").arg(tagName));
     QAction *selected = menu.exec(m_repoPanel->viewport()->mapToGlobal(pos));
 
@@ -2773,16 +2803,15 @@ void MainWindow::showTagContextMenu(const QPoint &pos) {
       } else {
         QMessageBox::warning(this, tr("Checkout failed"), output);
       }
-    } else if (selected == pushAction) {
-      const QStringList remotes = m_gitExecutor->run(m_currentPath, {"remote"});
-      if (remotes.isEmpty()) {
+    } else if (pushAction && selected == pushAction) {
+      if (pushableRemotes.isEmpty()) {
         QMessageBox::warning(this, tr("No remotes"),
                              tr("There are no remotes to push to."));
       } else {
         bool okRemote;
-        const QString remote =
-            QInputDialog::getItem(this, tr("Push Tag %1").arg(tagName),
-                                  tr("Remote:"), remotes, 0, false, &okRemote);
+        const QString remote = QInputDialog::getItem(
+            this, tr("Push Tag %1").arg(tagName), tr("Remote:"),
+            pushableRemotes, 0, false, &okRemote);
         if (okRemote && !remote.isEmpty()) {
           if (execGitWithProgress(
                   m_currentPath, {"push", remote, tagName},
@@ -2798,20 +2827,28 @@ void MainWindow::showTagContextMenu(const QPoint &pos) {
       QString localOutput;
       if (m_gitExecutor->exec(m_currentPath, {"tag", "-d", tagName},
                               &localOutput)) {
-        const QStringList remotes =
+        const QStringList allRemotes =
             m_gitExecutor->run(m_currentPath, {"remote"});
-        if (!remotes.isEmpty()) {
+        QStringList remotesWithTag;
+        for (const QString &remote : allRemotes) {
+          if (!m_gitExecutor
+                   ->run(m_currentPath,
+                         {"ls-remote", "--tags", remote, tagName})
+                   .isEmpty())
+            remotesWithTag.append(remote);
+        }
+        if (!remotesWithTag.isEmpty()) {
           QString remoteToDelete;
-          if (remotes.size() == 1) {
+          if (remotesWithTag.size() == 1) {
             auto reply = QMessageBox::question(
                 this, tr("Delete remote tag"),
                 tr("Also delete tag %1 from remote %2?")
-                    .arg(tagName, remotes.first()),
+                    .arg(tagName, remotesWithTag.first()),
                 QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
             if (reply == QMessageBox::Yes)
-              remoteToDelete = remotes.first();
+              remoteToDelete = remotesWithTag.first();
           } else {
-            QStringList choices = remotes;
+            QStringList choices = remotesWithTag;
             choices.append(tr("None (local only)"));
             bool ok;
             const QString choice = QInputDialog::getItem(
@@ -2849,7 +2886,7 @@ void MainWindow::onTagClicked(QTreeWidgetItem *item, int column) {
     return;
   }
 
-  const QString tagName = item->text(0);
+  const QString tagName = item->data(0, Qt::UserRole).toString();
   const QString sha =
       m_gitExecutor->run(m_currentPath, {"log", "-1", tagName, "--format=%H"})
           .value(0);
