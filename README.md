@@ -17,6 +17,10 @@ and managing pull-mode preferences. All interactions are backed by the regular
 `git` command-line tool, so your existing Git setup (SSH keys, remotes,
 submodules, hooks) works unchanged.
 
+## Screenshot
+
+![GitClientQt main window](screenshot.png)
+
 ## Build
 
 ```bash

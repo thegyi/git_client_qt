@@ -36,11 +36,33 @@ CommitTableWidget::CommitTableWidget(QWidget *parent) : QTableWidget(parent) {
 }
 
 QPixmap CommitTableWidget::commitGraphPixmap(const QString &graph,
-                                             int rowHeight, const QFont &font) {
+                                             int rowHeight, const QFont &font,
+                                             const QStringList &tags) {
   const QFontMetrics fm(font);
   const int charWidth = qMax(8, fm.horizontalAdvance(QLatin1Char('M')));
   const int h = qMax(16, rowHeight);
-  const int w = qMax(charWidth, graph.length() * charWidth);
+  const int graphWidth = qMax(charWidth, graph.length() * charWidth);
+
+  QFont labelFont(font);
+  if (labelFont.pointSizeF() > 0)
+    labelFont.setPointSizeF(qMax(6.0, labelFont.pointSizeF() - 1.0));
+  labelFont.setBold(true);
+  const QFontMetrics labelFm(labelFont);
+  const int labelPadding = 6;
+  const int labelSpacing = 4;
+  const int labelHeight = qMax(12, qMin(h - 6, labelFm.height() + 4));
+
+  QList<int> labelWidths;
+  int labelsWidth = 0;
+  for (const QString &tag : tags) {
+    const int tagWidth = labelFm.horizontalAdvance(tag) + labelPadding * 2;
+    labelWidths.append(tagWidth);
+    labelsWidth += tagWidth + labelSpacing;
+  }
+  if (labelsWidth > 0)
+    labelsWidth += labelSpacing;
+
+  const int w = graphWidth + labelsWidth;
 
   QPixmap pixmap(w, h);
   pixmap.fill(Qt::transparent);
@@ -89,6 +111,22 @@ QPixmap CommitTableWidget::commitGraphPixmap(const QString &graph,
       painter.drawPoint(x, midY);
     } else {
       painter.drawText(x - charWidth / 2, 0, charWidth, h, Qt::AlignCenter, c);
+    }
+  }
+
+  if (!labelWidths.isEmpty()) {
+    painter.setFont(labelFont);
+    const int labelY = (h - labelHeight) / 2;
+    int labelX = graphWidth + labelSpacing;
+    for (int i = 0; i < labelWidths.size(); ++i) {
+      const QRect chip(labelX, labelY, labelWidths.at(i), labelHeight);
+      painter.setPen(QPen(QColor(0xb8, 0x7a, 0x0d)));
+      painter.setBrush(QColor(0xf5, 0xc7, 0x4a));
+      painter.drawRoundedRect(chip, 4, 4);
+      painter.setBrush(Qt::NoBrush);
+      painter.setPen(QColor(0x33, 0x2b, 0x00));
+      painter.drawText(chip, Qt::AlignCenter, tags.at(i));
+      labelX += labelWidths.at(i) + labelSpacing;
     }
   }
 

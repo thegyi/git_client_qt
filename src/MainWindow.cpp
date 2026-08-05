@@ -2092,6 +2092,19 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
                                    QStringLiteral("refs/tags/")}))
       tagSet.insert(ref);
 
+    QHash<QString, QStringList> tagsBySha;
+    for (const QString &line : m_gitExecutor->run(
+             path, {"for-each-ref",
+                    "--format=%(objectname) %(*objectname) %(refname:short)",
+                    QStringLiteral("refs/tags/")})) {
+      const QStringList parts =
+          line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+      if (parts.size() >= 3)
+        tagsBySha[parts.at(1)].append(parts.at(2));
+      else if (parts.size() == 2)
+        tagsBySha[parts.at(0)].append(parts.at(1));
+    }
+
     if (m_branchLabel) {
       QString branchText = currentBranch;
       if (!m_remoteBranchName.isEmpty()) {
@@ -2144,8 +2157,8 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
       const QFont graphFont = Theme::monospaceFont();
       const int rowHeight =
           m_commitTable->verticalHeader()->defaultSectionSize();
-      const QPixmap graphPixmap =
-          CommitTableWidget::commitGraphPixmap(c.graph, rowHeight, graphFont);
+      const QPixmap graphPixmap = CommitTableWidget::commitGraphPixmap(
+          c.graph, rowHeight, graphFont, tagsBySha.value(c.fullSha));
       auto *graphItem = new QTableWidgetItem;
       graphItem->setData(Qt::DecorationRole, graphPixmap);
       graphItem->setToolTip(tip);
@@ -2696,11 +2709,47 @@ void MainWindow::showTagContextMenu(const QPoint &pos) {
         }
       }
     } else if (selected == deleteAction) {
-      if (m_gitExecutor->exec(m_currentPath, {"tag", "-d", tagName})) {
+      QString localOutput;
+      if (m_gitExecutor->exec(m_currentPath, {"tag", "-d", tagName},
+                              &localOutput)) {
+        const QStringList remotes =
+            m_gitExecutor->run(m_currentPath, {"remote"});
+        if (!remotes.isEmpty()) {
+          QString remoteToDelete;
+          if (remotes.size() == 1) {
+            auto reply = QMessageBox::question(
+                this, tr("Delete remote tag"),
+                tr("Also delete tag %1 from remote %2?")
+                    .arg(tagName, remotes.first()),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+            if (reply == QMessageBox::Yes)
+              remoteToDelete = remotes.first();
+          } else {
+            QStringList choices = remotes;
+            choices.append(tr("None (local only)"));
+            bool ok;
+            const QString choice = QInputDialog::getItem(
+                this, tr("Delete remote tag"),
+                tr("Also delete tag %1 from remote:").arg(tagName), choices, 0,
+                false, &ok);
+            if (ok && !choice.isEmpty() && choice != tr("None (local only)")) {
+              remoteToDelete = choice;
+            }
+          }
+          if (!remoteToDelete.isEmpty()) {
+            if (!m_gitExecutor->exec(
+                    m_currentPath, {"push", remoteToDelete,
+                                    QStringLiteral(":refs/tags/") + tagName})) {
+              QMessageBox::warning(this, tr("Remote tag delete failed"),
+                                   tr("Failed to delete tag %1 from remote %2.")
+                                       .arg(tagName, remoteToDelete));
+            }
+          }
+        }
         loadRepository(m_currentPath);
         statusBar()->showMessage(tr("Tag %1 deleted").arg(tagName));
       } else {
-        statusBar()->showMessage(tr("Failed to delete tag %1").arg(tagName));
+        QMessageBox::warning(this, tr("Delete tag failed"), localOutput);
       }
     }
   }
