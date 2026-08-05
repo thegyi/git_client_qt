@@ -6,8 +6,6 @@
 #include "widgets/FileTreeWidget.h"
 #include "widgets/RepoPanelWidget.h"
 
-#include <QDebug>
-
 #include <QAbstractItemView>
 #include <QAction>
 #include <QActionGroup>
@@ -1091,14 +1089,13 @@ void MainWindow::saveDockAndColumnState(bool includeGeometry) {
                 .toHex();
   const QString base =
       QLatin1String("dockLayouts/") + repoKey + QLatin1Char('/');
-  settings.setValue(base + QLatin1String("state"), saveState(0));
+  const QByteArray state = saveState(0);
+  settings.setValue(QLatin1String("mainWindow/dockState"), state);
 
   if (m_commitTable) {
     QVariantList widths;
     for (int c = 0; c < m_commitTable->columnCount(); ++c)
       widths << m_commitTable->columnWidth(c);
-    qDebug() << "saveDockAndColumnState" << m_currentPath << repoKey
-             << "commitTable widths:" << widths;
     settings.setValue(
         QLatin1String("dockLayouts/global/columnWidths/commitTable"), widths);
   }
@@ -1151,7 +1148,7 @@ bool MainWindow::restoreDockAndColumnState(bool includeGeometry) {
       QLatin1String("dockLayouts/") + repoKey + QLatin1Char('/');
 
   const QByteArray state =
-      settings.value(base + QLatin1String("state")).toByteArray();
+      settings.value(QLatin1String("mainWindow/dockState")).toByteArray();
   if (!state.isEmpty())
     restoreState(state, 0);
 
@@ -1189,8 +1186,6 @@ bool MainWindow::restoreDockAndColumnState(bool includeGeometry) {
         settings
             .value(QLatin1String("dockLayouts/global/columnWidths/commitTable"))
             .toList();
-    qDebug() << "restoreDockAndColumnState" << m_currentPath << repoKey
-             << "commitTable widths:" << widths;
     for (int c = 0; c < widths.size() && c < m_commitTable->columnCount(); ++c)
       m_commitTable->setColumnWidth(c, widths.at(c).toInt());
     restoredCommitTableWidths = !widths.isEmpty();
@@ -1801,10 +1796,6 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
                                    QStringLiteral("refs/tags/")}))
       tagSet.insert(ref);
 
-    qDebug() << "loadRepository remote:" << m_remoteBranchName
-             << m_remoteHeadSha << "unpushed:" << m_unpushedShas
-             << "unpulled:" << m_unpulledShas;
-
     if (m_branchLabel) {
       QString branchText = currentBranch;
       if (!m_remoteBranchName.isEmpty()) {
@@ -1850,12 +1841,6 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
         bgBrush = QBrush(QColor(225, 255, 225));
       else if (m_unpulledShas.contains(c.fullSha))
         bgBrush = QBrush(QColor(255, 240, 225));
-
-      if (r < 3)
-        qDebug() << "commit row" << r << c.shortSha << "unpushed?"
-                 << m_unpushedShas.contains(c.fullSha) << "unpulled?"
-                 << m_unpulledShas.contains(c.fullSha) << "bg set?"
-                 << (bgBrush != QBrush());
 
       const int row = m_commitTable->rowCount();
       m_commitTable->insertRow(row);
@@ -1922,14 +1907,15 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
     }
   }
   const bool restoredCommitTableWidths =
-      !isInitialLoad ? restoreDockAndColumnState(false) : false;
+      switchingRepo ? restoreDockAndColumnState(false) : false;
   if (!restoredCommitTableWidths) {
     m_commitTable->resizeColumnsToContents();
     m_commitTable->setColumnWidth(0, qMax(100, graphColumnWidth + 16));
   }
 
-  if (!m_currentPath.isEmpty())
+  if (!m_currentPath.isEmpty() && m_initialRepositoryLoaded)
     saveDockAndColumnState(false);
+  m_initialRepositoryLoaded = true;
 
   const int tableWidth =
       m_commitTable->horizontalHeader()->length() +
@@ -1945,8 +1931,6 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
     }
     resize(leftWidth + tableWidth + rightWidth, height());
   }
-  qDebug() << "loadRepository: loaded" << m_commitTable->rowCount()
-           << "commits";
   updateFilter();
 
   loadWorkingTree();
@@ -2394,21 +2378,15 @@ void MainWindow::showTagContextMenu(const QPoint &pos) {
 
 void MainWindow::onTagClicked(QTreeWidgetItem *item, int column) {
   Q_UNUSED(column)
-  qDebug() << "onTagClicked: item=" << item << "m_tagsItem=" << m_tagsItem;
   if (!item || !m_tagsItem || item->parent() != m_tagsItem) {
-    qDebug() << "onTagClicked: early return, not a tag item";
     return;
   }
 
   const QString tagName = item->text(0);
-  qDebug() << "onTagClicked: tagName=" << tagName;
   const QString sha =
       m_gitExecutor->run(m_currentPath, {"log", "-1", tagName, "--format=%H"})
           .value(0);
-  qDebug() << "onTagClicked: resolved sha=" << sha
-           << "tableRows=" << m_commitTable->rowCount();
   if (sha.isEmpty()) {
-    qDebug() << "onTagClicked: empty SHA, returning";
     return;
   }
 
@@ -2421,7 +2399,6 @@ void MainWindow::onTagClicked(QTreeWidgetItem *item, int column) {
         m_commitTable->setCurrentItem(msgItem);
         m_commitTable->scrollToItem(msgItem, QAbstractItemView::EnsureVisible);
       }
-      qDebug() << "onTagClicked: scrolled to row=" << row;
       break;
     }
   }

@@ -189,6 +189,8 @@ private:
   QDockWidget *m_commandLogDock = nullptr;
   QTextEdit *m_commandLogEdit = nullptr;
   QDockWidget *m_diffDock = nullptr;
+  bool m_commitTableResized = false;
+  bool m_initialRepositoryLoaded = false;
   QLineEdit *m_grepEdit = nullptr;
   QTreeWidget *m_grepResults = nullptr;
   QNetworkAccessManager *m_networkManager = nullptr;
