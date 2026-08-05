@@ -33,6 +33,7 @@ class QTableWidget;
 class QTableWidgetItem;
 class QTreeWidgetItem;
 class QTabBar;
+class QSplitter;
 class QNetworkAccessManager;
 
 QT_BEGIN_NAMESPACE
@@ -105,6 +106,7 @@ private:
   void onDiffAnchorClicked(const QUrl &link);
   void toggleGpgConfig(bool enabled);
   void restoreSettings();
+  void applyFonts();
   void savePullMode();
   void loadWorkingTree();
   void saveDockAndColumnState(bool includeGeometry = true);
@@ -195,6 +197,7 @@ private:
   QTreeWidget *m_grepResults = nullptr;
   QNetworkAccessManager *m_networkManager = nullptr;
   QTabBar *m_repoTabBar = nullptr;
+  QSplitter *m_mainSplitter = nullptr;
 };
 
 #endif // MAINWINDOW_H

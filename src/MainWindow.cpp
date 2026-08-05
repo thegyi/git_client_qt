@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 #include "GitExecutor.h"
+#include "Theme.h"
 #include "ui_MainWindow.h"
 #include "widgets/CommitTableWidget.h"
 #include "widgets/DiffViewWidget.h"
@@ -23,6 +24,7 @@
 #include <QFileInfo>
 #include <QFileSystemWatcher>
 #include <QFont>
+#include <QFontComboBox>
 #include <QFormLayout>
 #include <QFrame>
 #include <QGridLayout>
@@ -43,6 +45,7 @@
 #include <QScreen>
 #include <QSettings>
 #include <QShortcut>
+#include <QSpinBox>
 #include <QSplitter>
 #include <QStyle>
 #include <QStyleFactory>
@@ -97,10 +100,6 @@ MainWindow::MainWindow(QWidget *parent)
   ui->menuFile->setTitle(tr("&File"));
   ui->menuEdit->setTitle(tr("&Edit"));
   ui->menuHelp->setTitle(tr("&Help"));
-  setStyleSheet("QMainWindow::separator { background: #808080; width: 4px; }"
-                "QMenu::item { padding: 6px 24px 6px 12px; }"
-                "QMenu::item:selected { background-color: palette(highlight); "
-                "color: palette(highlighted-text); }");
   setDockNestingEnabled(true);
 
   m_watcher = new QFileSystemWatcher(this);
@@ -689,7 +688,11 @@ MainWindow::MainWindow(QWidget *parent)
   centralLayout->setSpacing(0);
   centralLayout->addWidget(m_repoTabBar);
   centralLayout->addWidget(m_centralStack);
-  setCentralWidget(centralContainer);
+
+  m_mainSplitter = new QSplitter(Qt::Horizontal, this);
+  m_mainSplitter->setHandleWidth(2);
+  m_mainSplitter->setChildrenCollapsible(true);
+  m_mainSplitter->addWidget(centralContainer);
 
   m_repoPanel = new RepoPanelWidget(this);
   connect(
@@ -730,14 +733,14 @@ MainWindow::MainWindow(QWidget *parent)
   dock->setObjectName(QStringLiteral("repoDock"));
   dock->setTitleBarWidget(new QWidget(dock));
   dock->setWidget(m_repoPanel);
-  dock->setFeatures(QDockWidget::DockWidgetMovable);
+  dock->setFeatures(QDockWidget::NoDockWidgetFeatures);
   dock->setMaximumWidth(400);
-  addDockWidget(Qt::LeftDockWidgetArea, dock);
   m_repoDock = dock;
+  m_mainSplitter->insertWidget(0, dock);
 
   auto *rightDock = new QDockWidget(tr("Working Tree"), this);
   rightDock->setObjectName(QStringLiteral("workTreeDock"));
-  rightDock->setFeatures(QDockWidget::DockWidgetMovable);
+  rightDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
   auto *rightWidget = new QWidget(this);
   rightWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
   auto *rightLayout = new QVBoxLayout(rightWidget);
@@ -831,15 +834,22 @@ MainWindow::MainWindow(QWidget *parent)
 
   rightDock->setWidget(rightWidget);
   rightDock->setTitleBarWidget(new QWidget(rightDock));
-  rightDock->setFeatures(QDockWidget::DockWidgetMovable);
-  addDockWidget(Qt::RightDockWidgetArea, rightDock);
+  rightDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
   m_workTreeDock = rightDock;
+  m_mainSplitter->addWidget(rightDock);
+
+  auto *mainContainer = new QWidget(this);
+  auto *mainContainerLayout = new QVBoxLayout(mainContainer);
+  mainContainerLayout->setContentsMargins(8, 10, 8, 8);
+  mainContainerLayout->setSpacing(0);
+  mainContainerLayout->addWidget(m_mainSplitter);
+  setCentralWidget(mainContainer);
 
   m_diffDock = new QDockWidget(tr("Diff"), this);
   m_diffDock->setObjectName(QStringLiteral("diffDock"));
   m_diffView = new DiffViewWidget(this);
   m_diffView->setMinimumHeight(120);
-  m_diffView->setFont(QFont(QStringLiteral("monospace"), 10));
+  m_diffView->setFont(Theme::monospaceFont());
   m_diffView->setFrameStyle(QFrame::NoFrame);
   m_diffView->document()->setDocumentMargin(0);
   connect(m_diffView, &QTextBrowser::anchorClicked, this,
@@ -887,13 +897,12 @@ MainWindow::MainWindow(QWidget *parent)
                           QDockWidget::DockWidgetFloatable);
   m_grepDock->setVisible(false);
   addDockWidget(Qt::RightDockWidgetArea, m_grepDock);
-  tabifyDockWidget(rightDock, m_grepDock);
 
   m_commandLogDock = new QDockWidget(tr("Command Log"), this);
   m_commandLogDock->setObjectName(QStringLiteral("commandLogDock"));
   m_commandLogEdit = new QTextEdit(this);
   m_commandLogEdit->setReadOnly(true);
-  m_commandLogEdit->setFont(QFont(QStringLiteral("monospace"), 9));
+  m_commandLogEdit->setFont(Theme::monospaceFont());
   m_commandLogDock->setWidget(m_commandLogEdit);
   m_commandLogDock->setFeatures(QDockWidget::DockWidgetMovable |
                                 QDockWidget::DockWidgetFloatable |
@@ -997,6 +1006,7 @@ MainWindow::MainWindow(QWidget *parent)
           &MainWindow::showPreferences);
 
   restoreSettings();
+  applyFonts();
   loadRepository(m_currentPath);
 
   auto *reloadShortcut = new QShortcut(QKeySequence(Qt::Key_F5), this);
@@ -1076,6 +1086,31 @@ void MainWindow::savePullMode() {
   settings.setValue("pullMode", mode);
 }
 
+void MainWindow::applyFonts() {
+  const QFont menu = Theme::menuFont();
+  if (QMenuBar *bar = menuBar()) {
+    bar->setFont(menu);
+    for (QAction *action : bar->actions()) {
+      if (QMenu *subMenu = action->menu())
+        subMenu->setFont(menu);
+    }
+  }
+
+  const QFont mono = Theme::monospaceFont();
+  if (m_diffView)
+    m_diffView->setFont(mono);
+  if (m_commandLogEdit)
+    m_commandLogEdit->setFont(mono);
+  if (m_commitTable) {
+    for (int row = 0; row < m_commitTable->rowCount(); ++row) {
+      for (const int column : {0, 6}) {
+        if (QTableWidgetItem *item = m_commitTable->item(row, column))
+          item->setFont(mono);
+      }
+    }
+  }
+}
+
 void MainWindow::saveDockAndColumnState(bool includeGeometry) {
   QSettings settings("GitClientQt", "GitClientQt");
   if (includeGeometry)
@@ -1091,6 +1126,9 @@ void MainWindow::saveDockAndColumnState(bool includeGeometry) {
       QLatin1String("dockLayouts/") + repoKey + QLatin1Char('/');
   const QByteArray state = saveState(0);
   settings.setValue(QLatin1String("mainWindow/dockState"), state);
+  if (m_mainSplitter)
+    settings.setValue(QLatin1String("mainWindow/mainSplitterState"),
+                      m_mainSplitter->saveState());
 
   if (m_commitTable) {
     QVariantList widths;
@@ -1151,6 +1189,14 @@ bool MainWindow::restoreDockAndColumnState(bool includeGeometry) {
       settings.value(QLatin1String("mainWindow/dockState")).toByteArray();
   if (!state.isEmpty())
     restoreState(state, 0);
+
+  if (m_mainSplitter) {
+    const QByteArray splitterState =
+        settings.value(QLatin1String("mainWindow/mainSplitterState"))
+            .toByteArray();
+    if (!splitterState.isEmpty())
+      m_mainSplitter->restoreState(splitterState);
+  }
 
   if (m_diffDock && m_diffDock->isFloating())
     m_diffDock->setFloating(false);
@@ -1321,6 +1367,68 @@ void MainWindow::showPreferences() {
     });
   }
 
+  auto *fontGroup = new QGroupBox(tr("Fonts"), &dlg);
+  auto *fontLayout = new QFormLayout(fontGroup);
+
+  auto *menuFontCombo = new QFontComboBox(&dlg);
+  menuFontCombo->setCurrentFont(QFont(
+      settings
+          .value(QStringLiteral("font/menuFamily"), Theme::defaultUiFamily())
+          .toString()));
+  auto *menuFontSize = new QSpinBox(&dlg);
+  menuFontSize->setRange(7, 24);
+  menuFontSize->setSuffix(tr(" pt"));
+  menuFontSize->setValue(
+      settings
+          .value(QStringLiteral("font/menuSize"), Theme::kDefaultMenuFontSize)
+          .toInt());
+
+  auto *uiFontCombo = new QFontComboBox(&dlg);
+  uiFontCombo->setCurrentFont(QFont(
+      settings.value(QStringLiteral("font/uiFamily"), Theme::defaultUiFamily())
+          .toString()));
+  auto *uiFontSize = new QSpinBox(&dlg);
+  uiFontSize->setRange(7, 24);
+  uiFontSize->setSuffix(tr(" pt"));
+  uiFontSize->setValue(
+      settings.value(QStringLiteral("font/uiSize"), Theme::kDefaultUiFontSize)
+          .toInt());
+
+  auto *monoFontCombo = new QFontComboBox(&dlg);
+  monoFontCombo->setFontFilters(QFontComboBox::MonospacedFonts);
+  monoFontCombo->setCurrentFont(
+      QFont(settings
+                .value(QStringLiteral("font/monoFamily"),
+                       Theme::defaultMonospaceFamily())
+                .toString()));
+  auto *monoFontSize = new QSpinBox(&dlg);
+  monoFontSize->setRange(7, 24);
+  monoFontSize->setSuffix(tr(" pt"));
+  monoFontSize->setValue(settings
+                             .value(QStringLiteral("font/monoSize"),
+                                    Theme::kDefaultMonospaceFontSize)
+                             .toInt());
+
+  fontLayout->addRow(tr("Menu font:"), menuFontCombo);
+  fontLayout->addRow(tr("Menu size:"), menuFontSize);
+  fontLayout->addRow(tr("Content font:"), uiFontCombo);
+  fontLayout->addRow(tr("Content size:"), uiFontSize);
+  fontLayout->addRow(tr("Monospace font:"), monoFontCombo);
+  fontLayout->addRow(tr("Monospace size:"), monoFontSize);
+
+  auto *resetFontsButton = new QPushButton(tr("Reset to defaults"), &dlg);
+  connect(resetFontsButton, &QPushButton::clicked, &dlg, [=] {
+    menuFontCombo->setCurrentFont(QFont(Theme::defaultUiFamily()));
+    menuFontSize->setValue(Theme::kDefaultMenuFontSize);
+    uiFontCombo->setCurrentFont(QFont(Theme::defaultUiFamily()));
+    uiFontSize->setValue(Theme::kDefaultUiFontSize);
+    monoFontCombo->setCurrentFont(QFont(Theme::defaultMonospaceFamily()));
+    monoFontSize->setValue(Theme::kDefaultMonospaceFontSize);
+  });
+  fontLayout->addRow(QString(), resetFontsButton);
+
+  themeLayout->addWidget(fontGroup);
+
   tabs->addTab(themeTab, tr("Theme"));
 
   auto *shortcutsTab = new QWidget(&dlg);
@@ -1429,17 +1537,22 @@ void MainWindow::showPreferences() {
         newPalette.setColor(QPalette::Active, roleList[i].second, c);
     }
   }
+  settings.setValue(QStringLiteral("font/menuFamily"),
+                    menuFontCombo->currentFont().family());
+  settings.setValue(QStringLiteral("font/menuSize"), menuFontSize->value());
+  settings.setValue(QStringLiteral("font/uiFamily"),
+                    uiFontCombo->currentFont().family());
+  settings.setValue(QStringLiteral("font/uiSize"), uiFontSize->value());
+  settings.setValue(QStringLiteral("font/monoFamily"),
+                    monoFontCombo->currentFont().family());
+  settings.setValue(QStringLiteral("font/monoSize"), monoFontSize->value());
+  settings.sync();
+
   qApp->setStyle(QStyleFactory::create("Fusion"));
   qApp->setPalette(newPalette);
-  qApp->setStyleSheet(
-      QStringLiteral("QMenuBar { color: %1; } "
-                     "QMenu::item { color: %2; }"
-                     "QLineEdit { color: %3; background-color: %4; }"
-                     "QTextEdit { color: %3; background-color: %4; }")
-          .arg(newPalette.color(QPalette::WindowText).name(),
-               newPalette.color(QPalette::Text).name(),
-               newPalette.color(QPalette::Text).name(),
-               newPalette.color(QPalette::Base).name()));
+  qApp->setFont(Theme::uiFont());
+  qApp->setStyleSheet(Theme::buildStyleSheet(newPalette));
+  applyFonts();
 
   for (int i = 0; i < roleList.size(); ++i) {
     const QColor c = newPalette.color(QPalette::Active, roleList[i].second);
@@ -1847,9 +1960,7 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
 
       auto *graphItem = new QTableWidgetItem(c.graph);
       graphItem->setToolTip(tip);
-      QFont graphFont;
-      graphFont.setStyleHint(QFont::Monospace);
-      graphFont.setFamily("Monospace");
+      const QFont graphFont = Theme::monospaceFont();
       graphItem->setFont(graphFont);
       graphColumnWidth = qMax(
           graphColumnWidth, QFontMetrics(graphFont).horizontalAdvance(c.graph));
@@ -1897,10 +2008,7 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
       auto *shaItem = new QTableWidgetItem(c.shortSha);
       shaItem->setData(Qt::UserRole, c.fullSha);
       shaItem->setToolTip(tip);
-      QFont shaFont;
-      shaFont.setStyleHint(QFont::Monospace);
-      shaFont.setFamily(QStringLiteral("Monospace"));
-      shaItem->setFont(shaFont);
+      shaItem->setFont(Theme::monospaceFont());
       if (bgBrush != QBrush())
         shaItem->setBackground(bgBrush);
       m_commitTable->setItem(row, 6, shaItem);
@@ -1925,10 +2033,8 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
     const int leftWidth = qBound(
         80, m_repoPanel ? m_repoPanel->sizeHint().width() + 20 : 180, 200);
     const int rightWidth = 200;
-    if (m_repoDock && m_workTreeDock) {
-      resizeDocks({m_repoDock, m_workTreeDock}, {leftWidth, rightWidth},
-                  Qt::Horizontal);
-    }
+    if (m_mainSplitter)
+      m_mainSplitter->setSizes({leftWidth, tableWidth, rightWidth});
     resize(leftWidth + tableWidth + rightWidth, height());
   }
   updateFilter();
@@ -3205,7 +3311,7 @@ void MainWindow::showBlame(const QString &path, const QString &revision) {
   table->setShowGrid(false);
   table->setSelectionBehavior(QAbstractItemView::SelectRows);
   table->setEditTriggers(QAbstractItemView::NoEditTriggers);
-  table->setFont(QFont(QStringLiteral("monospace"), 10));
+  table->setFont(Theme::monospaceFont(10));
   table->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
   layout->addWidget(table);
 
@@ -3900,7 +4006,7 @@ void MainWindow::editGitignore() {
   dlg.resize(700, 500);
   auto *layout = new QVBoxLayout(&dlg);
   auto *edit = new QTextEdit(&dlg);
-  edit->setFont(QFont(QStringLiteral("monospace"), 10));
+  edit->setFont(Theme::monospaceFont(10));
   layout->addWidget(edit);
 
   QString content;
@@ -3946,7 +4052,7 @@ void MainWindow::editGitattributes() {
   dlg.resize(700, 500);
   auto *layout = new QVBoxLayout(&dlg);
   auto *edit = new QTextEdit(&dlg);
-  edit->setFont(QFont(QStringLiteral("monospace"), 10));
+  edit->setFont(Theme::monospaceFont(10));
   layout->addWidget(edit);
 
   QString content;
@@ -4000,7 +4106,7 @@ void MainWindow::showCommitHooksAndTemplates() {
   templatePathLayout->addWidget(browseButton);
   templateLayout->addLayout(templatePathLayout);
   auto *templateEdit = new QTextEdit(templateTab);
-  templateEdit->setFont(QFont(QStringLiteral("monospace"), 10));
+  templateEdit->setFont(Theme::monospaceFont(10));
   templateLayout->addWidget(templateEdit);
   tabs->addTab(templateTab, tr("Commit template"));
 
@@ -4008,7 +4114,7 @@ void MainWindow::showCommitHooksAndTemplates() {
   auto *hooksLayout = new QHBoxLayout(hooksTab);
   auto *hooksList = new QListWidget(hooksTab);
   auto *hookEdit = new QTextEdit(hooksTab);
-  hookEdit->setFont(QFont(QStringLiteral("monospace"), 10));
+  hookEdit->setFont(Theme::monospaceFont(10));
   auto *saveHookButton = new QPushButton(tr("Save hook"), hooksTab);
   auto *hookEditLayout = new QVBoxLayout();
   hookEditLayout->addWidget(hookEdit);
@@ -4312,8 +4418,10 @@ void MainWindow::showRepositorySettings() {
 
   QDialog dlg(this);
   dlg.setWindowTitle(tr("Repository Settings"));
+  dlg.setMinimumWidth(560);
   auto *layout = new QVBoxLayout(&dlg);
   auto *form = new QFormLayout();
+  form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
 
   auto *nameEdit = new QLineEdit(&dlg);
   auto *emailEdit = new QLineEdit(&dlg);
@@ -4449,16 +4557,12 @@ void MainWindow::showHunkStaging(const QString &path, bool unstage) {
   auto *layout = new QVBoxLayout(&dlg);
 
   auto *list = new QListWidget(&dlg);
-  list->setStyleSheet(QStringLiteral(
-      "QListWidget { background-color: #1e1e1e; color: #d4d4d4; "
-      "font-family: monospace; }"
-      "QListWidget::item { padding: 4px; }"
-      "QListWidget::item:selected { background-color: #3c3c3c; }"));
+  list->setFont(Theme::monospaceFont(10));
   list->setMinimumHeight(80);
 
   auto *preview = new QTextEdit(&dlg);
   preview->setReadOnly(true);
-  preview->setFont(QFont(QStringLiteral("monospace"), 10));
+  preview->setFont(Theme::monospaceFont(10));
 
   for (const Hunk &h : hunks) {
     QStringList hunkLines;

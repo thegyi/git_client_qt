@@ -7,6 +7,7 @@
 #include <QVector>
 
 #include "MainWindow.h"
+#include "Theme.h"
 
 static void applyTheme() {
   QSettings settings("GitClientQt", "GitClientQt");
@@ -64,15 +65,8 @@ static void applyTheme() {
   }
   qApp->setStyle(QStyleFactory::create("Fusion"));
   qApp->setPalette(palette);
-  qApp->setStyleSheet(
-      QStringLiteral("QMenuBar { color: %1; } "
-                     "QMenu::item { color: %2; }"
-                     "QLineEdit { color: %3; background-color: %4; }"
-                     "QTextEdit { color: %3; background-color: %4; }")
-          .arg(palette.color(QPalette::WindowText).name(),
-               palette.color(QPalette::Text).name(),
-               palette.color(QPalette::Text).name(),
-               palette.color(QPalette::Base).name()));
+  qApp->setFont(Theme::uiFont());
+  qApp->setStyleSheet(Theme::buildStyleSheet(palette));
 }
 
 #ifdef Q_OS_UNIX

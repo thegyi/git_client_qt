@@ -1,5 +1,6 @@
 #include "CommitTableWidget.h"
 
+#include <QFrame>
 #include <QHeaderView>
 
 CommitTableWidget::CommitTableWidget(QWidget *parent) : QTableWidget(parent) {
@@ -13,14 +14,17 @@ CommitTableWidget::CommitTableWidget(QWidget *parent) : QTableWidget(parent) {
   setEditTriggers(QAbstractItemView::NoEditTriggers);
   verticalHeader()->setVisible(false);
   horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
-  setShowGrid(true);
-  setStyleSheet(
-      QStringLiteral("QTableView { gridline-color: #555555; }"
-                     "QTableView::item { border: 1px solid #555555; }"
-                     "QTableView::item:alternate { border: 1px solid #555555; }"
-                     "QTableView::item:selected { "
-                     "background-color: palette(highlight); "
-                     "color: palette(highlighted-text); }"));
+  horizontalHeader()->setHighlightSections(false);
+  setShowGrid(false);
+  setFrameShape(QFrame::NoFrame);
+  setWordWrap(false);
+  verticalHeader()->setDefaultSectionSize(26);
+  setStyleSheet(QStringLiteral(
+      "QTableView { border: none; outline: none; }"
+      "QTableView::item { border: none; padding: 4px 8px; }"
+      "QTableView::item:hover { background-color: rgba(127, 127, 127, 40); }"
+      "QTableView::item:selected { background-color: palette(highlight); "
+      "color: palette(highlighted-text); }"));
   setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
   setAlternatingRowColors(true);
   setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
