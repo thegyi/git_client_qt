@@ -99,6 +99,9 @@ private slots:
   void lfsPush();
 
 private:
+  enum class AmendStrategy { LocalOnly, ForceWithLease, Fixup, Cancel };
+
+  AmendStrategy askAmendStrategy();
   void loadRepository(const QString &path, bool updateTab = true);
   void activateRepositoryTab(const QString &path);
   bool repositoryStateChanged() const;
@@ -108,6 +111,11 @@ private:
   void restoreSettings();
   void applyFonts();
   void savePullMode();
+  bool performPush(const QStringList &extraArgs);
+  QString currentBranchName() const;
+  bool isHeadPushed() const;
+  bool isProtectedBranch(const QString &branch) const;
+  void updateAmendWarning();
   void loadWorkingTree();
   void saveDockAndColumnState(bool includeGeometry = true);
   void saveOpenTabs();
@@ -176,6 +184,9 @@ private:
   QTextEdit *m_commitBody = nullptr;
   QPushButton *m_commitButton = nullptr;
   QCheckBox *m_amendCheckBox = nullptr;
+  QLabel *m_amendWarningLabel = nullptr;
+  QString m_commitSubjectDraft;
+  QString m_commitBodyDraft;
   QCheckBox *m_signCommitCheckBox = nullptr;
   QLabel *m_branchLabel = nullptr;
   QToolButton *m_pushButton = nullptr;

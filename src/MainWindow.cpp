@@ -7,6 +7,7 @@
 #include "widgets/FileTreeWidget.h"
 #include "widgets/RepoPanelWidget.h"
 
+#include <QAbstractButton>
 #include <QAbstractItemView>
 #include <QAction>
 #include <QActionGroup>
@@ -422,93 +423,12 @@ MainWindow::MainWindow(QWidget *parent)
   });
 
   connect(m_pushButton, &QToolButton::clicked, this, [this] {
-    if (m_currentPath.isEmpty())
-      return;
-
-    const QString currentBranch =
-        m_gitExecutor->run(m_currentPath, {"rev-parse", "--abbrev-ref", "HEAD"})
-            .value(0);
-    if (currentBranch.isEmpty()) {
-      QMessageBox::warning(this, tr("Push failed"),
-                           tr("Could not determine the current branch."));
-      return;
-    }
-
-    const QString remote =
-        m_gitExecutor
-            ->run(m_currentPath,
-                  {"config",
-                   QStringLiteral("branch.%1.remote").arg(currentBranch)})
-            .value(0);
-    const QString pushRemote =
-        remote.isEmpty() ? QStringLiteral("origin") : remote;
-
-    QStringList args = {QStringLiteral("push")};
+    QStringList extraArgs;
     for (const QString &arg : m_pushArgs) {
       if (arg != QStringLiteral("push"))
-        args << arg;
+        extraArgs << arg;
     }
-    args << QStringLiteral("-u") << pushRemote << currentBranch;
-
-    QProgressDialog progress(tr("Pushing to remote..."), tr("Cancel"), 0, 0,
-                             this);
-    progress.setWindowModality(Qt::WindowModal);
-    progress.setMinimumDuration(0);
-
-    QProcess p;
-    p.setWorkingDirectory(m_currentPath);
-
-    QString output;
-    bool canceled = false;
-    connect(&p, &QProcess::readyReadStandardOutput, this, [&]() {
-      output += QString::fromLocal8Bit(p.readAllStandardOutput());
-    });
-    connect(&p, &QProcess::readyReadStandardError, this, [&]() {
-      output += QString::fromLocal8Bit(p.readAllStandardError());
-    });
-    connect(&p, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-            &progress, &QProgressDialog::close);
-    connect(&p, &QProcess::errorOccurred, &progress, &QProgressDialog::close);
-    connect(&progress, &QProgressDialog::canceled, &p, &QProcess::kill);
-    connect(&progress, &QProgressDialog::canceled, this,
-            [&]() { canceled = true; });
-
-    p.start(QStringLiteral("git"), args);
-    if (!p.waitForStarted(5000)) {
-      QMessageBox::warning(this, tr("Push failed"),
-                           tr("Could not start git process"));
-      return;
-    }
-
-    progress.exec();
-
-    if (canceled) {
-      statusBar()->showMessage(tr("Push canceled"));
-      return;
-    }
-
-    if (p.exitCode() == 0) {
-      if (!remote.isEmpty())
-        m_gitExecutor->exec(m_currentPath, {QStringLiteral("fetch"), remote});
-      loadRepository(m_currentPath);
-      statusBar()->showMessage(tr("Push finished"));
-      if (!output.isEmpty()) {
-        QMessageBox msg(this);
-        msg.setWindowTitle(tr("Push output"));
-        msg.setText(tr("Push completed successfully."));
-        msg.setDetailedText(output);
-        msg.setStandardButtons(QMessageBox::Ok);
-        msg.exec();
-      }
-    } else {
-      QMessageBox msg(this);
-      msg.setWindowTitle(tr("Push failed"));
-      msg.setText(tr("Git push failed."));
-      msg.setDetailedText(output);
-      msg.setIcon(QMessageBox::Warning);
-      msg.setStandardButtons(QMessageBox::Ok);
-      msg.exec();
-    }
+    performPush(extraArgs);
   });
 
   connect(m_pullButton, &QToolButton::clicked, this, [this] {
@@ -801,6 +721,12 @@ MainWindow::MainWindow(QWidget *parent)
   messageLayout->addWidget(m_commitBody);
   m_amendCheckBox = new QCheckBox(tr("Amend last commit"), this);
   messageLayout->addWidget(m_amendCheckBox);
+  m_amendWarningLabel = new QLabel(this);
+  m_amendWarningLabel->setWordWrap(true);
+  m_amendWarningLabel->setVisible(false);
+  m_amendWarningLabel->setStyleSheet(
+      QStringLiteral("color: #d98b26; font-size: 9pt;"));
+  messageLayout->addWidget(m_amendWarningLabel);
   m_signCommitCheckBox = new QCheckBox(tr("Sign with GPG"), this);
   messageLayout->addWidget(m_signCommitCheckBox);
   connect(m_signCommitCheckBox, &QCheckBox::toggled, this,
@@ -1086,6 +1012,149 @@ void MainWindow::savePullMode() {
   settings.setValue("pullMode", mode);
 }
 
+QString MainWindow::currentBranchName() const {
+  if (m_currentPath.isEmpty())
+    return QString();
+  return m_gitExecutor
+      ->run(m_currentPath, {"rev-parse", "--abbrev-ref", "HEAD"})
+      .value(0);
+}
+
+bool MainWindow::isHeadPushed() const {
+  if (m_remoteBranchName.isEmpty() || m_localHeadSha.isEmpty())
+    return false;
+  return !m_unpushedShas.contains(m_localHeadSha);
+}
+
+bool MainWindow::isProtectedBranch(const QString &branch) const {
+  if (branch.isEmpty())
+    return false;
+  const QSettings settings(QStringLiteral("GitClientQt"),
+                           QStringLiteral("GitClientQt"));
+  const QStringList protectedBranches =
+      settings
+          .value(QStringLiteral("protectedBranches"),
+                 QStringList{QStringLiteral("main"), QStringLiteral("master"),
+                             QStringLiteral("develop")})
+          .toStringList();
+  for (const QString &candidate : protectedBranches) {
+    if (branch.compare(candidate.trimmed(), Qt::CaseInsensitive) == 0)
+      return true;
+  }
+  return false;
+}
+
+void MainWindow::updateAmendWarning() {
+  if (!m_amendWarningLabel)
+    return;
+
+  const bool amending = m_amendCheckBox && m_amendCheckBox->isChecked();
+  if (!amending || !isHeadPushed()) {
+    m_amendWarningLabel->setVisible(false);
+    return;
+  }
+
+  const QString branch = currentBranchName();
+  if (isProtectedBranch(branch)) {
+    m_amendWarningLabel->setText(
+        tr("This commit is already pushed to the protected branch '%1'. "
+           "Amending rewrites published history and force pushing is blocked.")
+            .arg(branch));
+  } else {
+    m_amendWarningLabel->setText(
+        tr("This commit is already pushed. Amending rewrites published "
+           "history and requires a force push."));
+  }
+  m_amendWarningLabel->setVisible(true);
+}
+
+bool MainWindow::performPush(const QStringList &extraArgs) {
+  if (m_currentPath.isEmpty())
+    return false;
+
+  const QString currentBranch = currentBranchName();
+  if (currentBranch.isEmpty()) {
+    QMessageBox::warning(this, tr("Push failed"),
+                         tr("Could not determine the current branch."));
+    return false;
+  }
+
+  const QString remote =
+      m_gitExecutor
+          ->run(
+              m_currentPath,
+              {"config", QStringLiteral("branch.%1.remote").arg(currentBranch)})
+          .value(0);
+  const QString pushRemote =
+      remote.isEmpty() ? QStringLiteral("origin") : remote;
+
+  QStringList args = {QStringLiteral("push")};
+  args << extraArgs;
+  args << QStringLiteral("-u") << pushRemote << currentBranch;
+
+  QProgressDialog progress(tr("Pushing to remote..."), tr("Cancel"), 0, 0,
+                           this);
+  progress.setWindowModality(Qt::WindowModal);
+  progress.setMinimumDuration(0);
+
+  QProcess p;
+  p.setWorkingDirectory(m_currentPath);
+
+  QString output;
+  bool canceled = false;
+  connect(&p, &QProcess::readyReadStandardOutput, this, [&]() {
+    output += QString::fromLocal8Bit(p.readAllStandardOutput());
+  });
+  connect(&p, &QProcess::readyReadStandardError, this, [&]() {
+    output += QString::fromLocal8Bit(p.readAllStandardError());
+  });
+  connect(&p, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+          &progress, &QProgressDialog::close);
+  connect(&p, &QProcess::errorOccurred, &progress, &QProgressDialog::close);
+  connect(&progress, &QProgressDialog::canceled, &p, &QProcess::kill);
+  connect(&progress, &QProgressDialog::canceled, this,
+          [&]() { canceled = true; });
+
+  p.start(QStringLiteral("git"), args);
+  if (!p.waitForStarted(5000)) {
+    QMessageBox::warning(this, tr("Push failed"),
+                         tr("Could not start git process"));
+    return false;
+  }
+
+  progress.exec();
+
+  if (canceled) {
+    statusBar()->showMessage(tr("Push canceled"));
+    return false;
+  }
+
+  if (p.exitCode() == 0) {
+    if (!remote.isEmpty())
+      m_gitExecutor->exec(m_currentPath, {QStringLiteral("fetch"), remote});
+    loadRepository(m_currentPath);
+    statusBar()->showMessage(tr("Push finished"));
+    if (!output.isEmpty()) {
+      QMessageBox msg(this);
+      msg.setWindowTitle(tr("Push output"));
+      msg.setText(tr("Push completed successfully."));
+      msg.setDetailedText(output);
+      msg.setStandardButtons(QMessageBox::Ok);
+      msg.exec();
+    }
+    return true;
+  }
+
+  QMessageBox msg(this);
+  msg.setWindowTitle(tr("Push failed"));
+  msg.setText(tr("Git push failed."));
+  msg.setDetailedText(output);
+  msg.setIcon(QMessageBox::Warning);
+  msg.setStandardButtons(QMessageBox::Ok);
+  msg.exec();
+  return false;
+}
+
 void MainWindow::applyFonts() {
   const QFont menu = Theme::menuFont();
   if (QMenuBar *bar = menuBar()) {
@@ -1270,9 +1339,22 @@ void MainWindow::showPreferences() {
   auto *gpgKeyEdit = new QLineEdit(&dlg);
   gpgKeyEdit->setText(settings.value("gpgSigningKey").toString());
 
+  auto *protectedBranchesEdit = new QLineEdit(&dlg);
+  protectedBranchesEdit->setPlaceholderText(tr("main, master, develop"));
+  protectedBranchesEdit->setToolTip(
+      tr("Force pushing after an amend is blocked on these branches."));
+  protectedBranchesEdit->setText(
+      settings
+          .value(QStringLiteral("protectedBranches"),
+                 QStringList{QStringLiteral("main"), QStringLiteral("master"),
+                             QStringLiteral("develop")})
+          .toStringList()
+          .join(QStringLiteral(", ")));
+
   generalLayout->addRow(tr("Default pull mode:"), pullModeCombo);
   generalLayout->addWidget(reopenBox);
   generalLayout->addRow(tr("GPG key ID or email:"), gpgKeyEdit);
+  generalLayout->addRow(tr("Protected branches:"), protectedBranchesEdit);
   tabs->addTab(generalTab, tr("General"));
 
   auto *themeTab = new QWidget(&dlg);
@@ -1561,6 +1643,17 @@ void MainWindow::showPreferences() {
   }
 
   settings.setValue("gpgSigningKey", gpgKeyEdit->text().trimmed());
+
+  QStringList protectedBranches;
+  for (const QString &part :
+       protectedBranchesEdit->text().split(QLatin1Char(','))) {
+    const QString trimmed = part.trimmed();
+    if (!trimmed.isEmpty())
+      protectedBranches << trimmed;
+  }
+  settings.setValue(QStringLiteral("protectedBranches"), protectedBranches);
+  settings.sync();
+  updateAmendWarning();
 
   for (auto it = actionMap.begin(); it != actionMap.end(); ++it) {
     QKeySequenceEdit *seqEdit = shortcutEdits.value(it.key());
@@ -2038,6 +2131,7 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
     resize(leftWidth + tableWidth + rightWidth, height());
   }
   updateFilter();
+  updateAmendWarning();
 
   loadWorkingTree();
 
@@ -2598,6 +2692,10 @@ void MainWindow::onAmendToggled(int state) {
     if (lines.isEmpty())
       return;
 
+    m_commitSubjectDraft =
+        m_commitSubject ? m_commitSubject->text() : QString();
+    m_commitBodyDraft = m_commitBody ? m_commitBody->toPlainText() : QString();
+
     if (m_commitSubject)
       m_commitSubject->setText(lines.first());
     if (m_commitBody) {
@@ -2605,10 +2703,13 @@ void MainWindow::onAmendToggled(int state) {
     }
   } else {
     if (m_commitSubject)
-      m_commitSubject->clear();
+      m_commitSubject->setText(m_commitSubjectDraft);
     if (m_commitBody)
-      m_commitBody->clear();
+      m_commitBody->setPlainText(m_commitBodyDraft);
+    m_commitSubjectDraft.clear();
+    m_commitBodyDraft.clear();
   }
+  updateAmendWarning();
   updateCommitButton();
 }
 
@@ -2673,6 +2774,37 @@ void MainWindow::onCommitClicked() {
     message += "\n\n" + body;
   }
 
+  const bool amending = m_amendCheckBox && m_amendCheckBox->isChecked();
+
+  // Amending an unpushed commit is a purely local operation, so it needs no
+  // confirmation. Amending a pushed commit rewrites published history, so the
+  // user has to choose how to deal with the divergence up front rather than
+  // discovering it when the next push is rejected.
+  AmendStrategy strategy = AmendStrategy::LocalOnly;
+  if (amending && isHeadPushed()) {
+    strategy = askAmendStrategy();
+    if (strategy == AmendStrategy::Cancel)
+      return;
+  }
+
+  if (strategy == AmendStrategy::Fixup) {
+    if (!m_gitExecutor->exec(m_currentPath, {QStringLiteral("commit"),
+                                             QStringLiteral("--fixup=HEAD")})) {
+      statusBar()->showMessage(tr("Creating fixup commit failed"));
+      return;
+    }
+    if (m_amendCheckBox)
+      m_amendCheckBox->setChecked(false);
+    m_commitSubject->clear();
+    m_commitBody->clear();
+    m_commitSubjectDraft.clear();
+    m_commitBodyDraft.clear();
+    loadRepository(m_currentPath);
+    statusBar()->showMessage(
+        tr("Created fixup commit. Squash it later with rebase --autosquash."));
+    return;
+  }
+
   QTemporaryFile tempFile;
   if (!tempFile.open()) {
     statusBar()->showMessage(tr("Failed to create commit message file"));
@@ -2681,22 +2813,78 @@ void MainWindow::onCommitClicked() {
   tempFile.write(message.toUtf8());
   tempFile.close();
 
-  QStringList commitArgs =
-      (m_amendCheckBox && m_amendCheckBox->isChecked())
-          ? QStringList{"commit", "--amend", "-F", tempFile.fileName()}
-          : QStringList{"commit", "-F", tempFile.fileName()};
-  if (m_gitExecutor->exec(m_currentPath, commitArgs)) {
-    m_commitSubject->clear();
-    m_commitBody->clear();
-    if (m_amendCheckBox)
-      m_amendCheckBox->setChecked(false);
-    loadRepository(m_currentPath);
-    statusBar()->showMessage((m_amendCheckBox && m_amendCheckBox->isChecked())
-                                 ? tr("Amended")
-                                 : tr("Committed"));
-  } else {
+  const QStringList commitArgs =
+      amending ? QStringList{"commit", "--amend", "-F", tempFile.fileName()}
+               : QStringList{"commit", "-F", tempFile.fileName()};
+  if (!m_gitExecutor->exec(m_currentPath, commitArgs)) {
     statusBar()->showMessage(tr("Commit failed"));
+    return;
   }
+
+  m_commitSubject->clear();
+  m_commitBody->clear();
+  m_commitSubjectDraft.clear();
+  m_commitBodyDraft.clear();
+  if (m_amendCheckBox)
+    m_amendCheckBox->setChecked(false);
+  loadRepository(m_currentPath);
+  statusBar()->showMessage(amending ? tr("Amended") : tr("Committed"));
+
+  // A one-shot lease push: never mutate the sticky push mode, so later pushes
+  // stay on whatever the user actually selected in the Push dropdown.
+  if (strategy == AmendStrategy::ForceWithLease)
+    performPush({QStringLiteral("--force-with-lease")});
+}
+
+MainWindow::AmendStrategy MainWindow::askAmendStrategy() {
+  const QString branch = currentBranchName();
+  const bool blocked = isProtectedBranch(branch);
+
+  QMessageBox box(this);
+  box.setIcon(QMessageBox::Warning);
+  box.setWindowTitle(tr("Amend a pushed commit"));
+  box.setText(tr("The last commit has already been pushed."));
+  if (blocked) {
+    box.setInformativeText(
+        tr("Amending rewrites published history. Branch '%1' is protected, so "
+           "force pushing is not offered. Create a fixup commit instead, or "
+           "amend locally and resolve the divergence yourself.")
+            .arg(branch));
+  } else {
+    box.setInformativeText(
+        tr("Amending rewrites published history and the remote will reject a "
+           "normal push. Choose how to proceed."));
+  }
+
+  QPushButton *leaseButton = nullptr;
+  if (!blocked) {
+    leaseButton = box.addButton(tr("Amend and force push with lease"),
+                                QMessageBox::AcceptRole);
+  }
+  // A fixup commit needs staged content; with nothing staged the amend can
+  // only be a message edit, so the option would always fail.
+  const bool hasStaged = m_stagedTree && m_stagedTree->topLevelItemCount() > 0;
+  QPushButton *fixupButton = nullptr;
+  if (hasStaged) {
+    fixupButton = box.addButton(tr("Create fixup commit instead"),
+                                QMessageBox::ActionRole);
+  }
+  auto *localButton =
+      box.addButton(tr("Amend locally only"), QMessageBox::ActionRole);
+  auto *cancelButton = box.addButton(QMessageBox::Cancel);
+  box.setDefaultButton(blocked ? (fixupButton ? fixupButton : localButton)
+                               : leaseButton);
+
+  box.exec();
+
+  QAbstractButton *clicked = box.clickedButton();
+  if (clicked == cancelButton || clicked == nullptr)
+    return AmendStrategy::Cancel;
+  if (clicked == fixupButton)
+    return AmendStrategy::Fixup;
+  if (clicked == localButton)
+    return AmendStrategy::LocalOnly;
+  return AmendStrategy::ForceWithLease;
 }
 
 void MainWindow::toggleGpgConfig(bool enabled) {
