@@ -141,11 +141,15 @@ MainWindow::MainWindow(QWidget *parent)
   });
 
   m_recentMenu = new QMenu(tr("Recent Repositories"), this);
+  m_recentMenu->setIcon(
+      themedIcon("document-open-recent", QStyle::SP_DirLinkIcon));
   ui->menuFile->insertMenu(ui->actionClose, m_recentMenu);
 
   auto *searchMenu = new QMenu(tr("&Search"), this);
   menuBar()->addMenu(searchMenu);
   auto *grepAction = searchMenu->addAction(tr("Grep"));
+  grepAction->setIcon(
+      themedIcon("edit-find", QStyle::SP_FileDialogContentsView));
   grepAction->setStatusTip(tr("Search for a pattern in the repository"));
   grepAction->setShortcut(QKeySequence(QLatin1String("Ctrl+Shift+G")));
   connect(grepAction, &QAction::triggered, this, &MainWindow::onGrepRequested);
@@ -153,15 +157,25 @@ MainWindow::MainWindow(QWidget *parent)
   auto *submodulesMenu = new QMenu(tr("&Submodules"), this);
   menuBar()->addMenu(submodulesMenu);
   auto *initSubmodulesAction = submodulesMenu->addAction(tr("Init"));
+  initSubmodulesAction->setIcon(
+      themedIcon("folder-new", QStyle::SP_FileDialogNewFolder));
   initSubmodulesAction->setStatusTip(
       tr("Initialize the configured submodules"));
   auto *updateSubmodulesAction = submodulesMenu->addAction(tr("Update"));
+  updateSubmodulesAction->setIcon(
+      themedIcon("view-refresh", QStyle::SP_BrowserReload));
   updateSubmodulesAction->setStatusTip(tr("Update registered submodules"));
   auto *syncSubmodulesAction = submodulesMenu->addAction(tr("Sync"));
+  syncSubmodulesAction->setIcon(
+      themedIcon("emblem-synchronizing", QStyle::SP_BrowserReload));
   syncSubmodulesAction->setStatusTip(tr("Sync submodule remotes"));
   auto *addSubmoduleAction = submodulesMenu->addAction(tr("Add..."));
+  addSubmoduleAction->setIcon(
+      themedIcon("list-add", QStyle::SP_FileDialogNewFolder));
   addSubmoduleAction->setStatusTip(tr("Add a new submodule to the repository"));
   auto *openSubmoduleAction = submodulesMenu->addAction(tr("Open..."));
+  openSubmoduleAction->setIcon(
+      themedIcon("document-open", QStyle::SP_DirOpenIcon));
   openSubmoduleAction->setStatusTip(tr("Open the selected submodule"));
   connect(initSubmodulesAction, &QAction::triggered, this,
           &MainWindow::initSubmodules);
@@ -192,6 +206,8 @@ MainWindow::MainWindow(QWidget *parent)
   }
 
   auto *repoSettingsAction = repositoryMenu->addAction(tr("Settings..."));
+  repoSettingsAction->setIcon(
+      themedIcon("preferences-system", QStyle::SP_ComputerIcon));
   repoSettingsAction->setStatusTip(tr("Configure repository settings"));
   repoSettingsAction->setShortcut(QKeySequence(QLatin1String("Ctrl+,")));
   connect(repoSettingsAction, &QAction::triggered, this,
@@ -199,6 +215,8 @@ MainWindow::MainWindow(QWidget *parent)
 
   auto *hooksAndTemplatesAction =
       repositoryMenu->addAction(tr("Commit hooks and templates..."));
+  hooksAndTemplatesAction->setIcon(
+      themedIcon("text-x-script", QStyle::SP_FileIcon));
   hooksAndTemplatesAction->setStatusTip(
       tr("Edit commit message template and repository hooks"));
   hooksAndTemplatesAction->setShortcut(
@@ -207,17 +225,23 @@ MainWindow::MainWindow(QWidget *parent)
           &MainWindow::showCommitHooksAndTemplates);
 
   auto *applyPatchAction = repositoryMenu->addAction(tr("Apply patch..."));
+  applyPatchAction->setIcon(
+      themedIcon("document-import", QStyle::SP_FileDialogStart));
   applyPatchAction->setStatusTip(tr("Apply a patch or diff file"));
   applyPatchAction->setShortcut(QKeySequence(QLatin1String("Ctrl+Shift+P")));
   connect(applyPatchAction, &QAction::triggered, this, &MainWindow::applyPatch);
 
   auto *reflogAction = repositoryMenu->addAction(tr("Reflog"));
+  reflogAction->setIcon(
+      themedIcon("view-list-text", QStyle::SP_FileDialogListView));
   reflogAction->setStatusTip(tr("View the reference log"));
   reflogAction->setShortcut(QKeySequence(QLatin1String("Ctrl+Shift+R")));
   connect(reflogAction, &QAction::triggered, this, &MainWindow::showReflog);
 
   auto *diffWithRemoteAction =
       repositoryMenu->addAction(tr("Diff local vs remote"));
+  diffWithRemoteAction->setIcon(
+      themedIcon("view-split-left-right", QStyle::SP_FileDialogContentsView));
   diffWithRemoteAction->setStatusTip(
       tr("Show diff between local and remote HEAD"));
   connect(diffWithRemoteAction, &QAction::triggered, this,
@@ -225,6 +249,7 @@ MainWindow::MainWindow(QWidget *parent)
 
   auto *undoLastCommitAction =
       repositoryMenu->addAction(tr("Undo last commit"));
+  undoLastCommitAction->setIcon(themedIcon("edit-undo", QStyle::SP_ArrowBack));
   undoLastCommitAction->setStatusTip(
       tr("Soft-reset the most recent commit and keep changes staged"));
   connect(undoLastCommitAction, &QAction::triggered, this,
@@ -232,6 +257,8 @@ MainWindow::MainWindow(QWidget *parent)
 
   auto *resolveConflictsAction =
       repositoryMenu->addAction(tr("Resolve conflicts..."));
+  resolveConflictsAction->setIcon(
+      themedIcon("dialog-warning", QStyle::SP_MessageBoxWarning));
   resolveConflictsAction->setStatusTip(tr("Resolve merge conflicts"));
   resolveConflictsAction->setShortcut(
       QKeySequence(QLatin1String("Ctrl+Shift+C")));
@@ -239,11 +266,23 @@ MainWindow::MainWindow(QWidget *parent)
           [this]() { showConflictResolver(QString()); });
 
   auto *bisectMenu = repositoryMenu->addMenu(tr("&Bisect"));
+  bisectMenu->setIcon(
+      themedIcon("edit-find-replace", QStyle::SP_FileDialogContentsView));
   auto *bisectStartAction = bisectMenu->addAction(tr("Start..."));
+  bisectStartAction->setIcon(
+      themedIcon("media-playback-start", QStyle::SP_MediaPlay));
   auto *bisectGoodAction = bisectMenu->addAction(tr("Good"));
+  bisectGoodAction->setIcon(
+      themedIcon("dialog-ok", QStyle::SP_DialogApplyButton));
   auto *bisectBadAction = bisectMenu->addAction(tr("Bad"));
+  bisectBadAction->setIcon(
+      themedIcon("process-stop", QStyle::SP_MessageBoxCritical));
   auto *bisectSkipAction = bisectMenu->addAction(tr("Skip"));
+  bisectSkipAction->setIcon(
+      themedIcon("media-skip-forward", QStyle::SP_MediaSkipForward));
   auto *bisectResetAction = bisectMenu->addAction(tr("Reset"));
+  bisectResetAction->setIcon(
+      themedIcon("edit-undo", QStyle::SP_DialogResetButton));
   connect(bisectStartAction, &QAction::triggered, this,
           &MainWindow::startBisect);
   connect(bisectGoodAction, &QAction::triggered, this, &MainWindow::bisectGood);
@@ -253,10 +292,17 @@ MainWindow::MainWindow(QWidget *parent)
           &MainWindow::bisectReset);
 
   auto *lfsMenu = repositoryMenu->addMenu(tr("&LFS"));
+  lfsMenu->setIcon(themedIcon("package-x-generic", QStyle::SP_DriveHDIcon));
   auto *lfsTrackAction = lfsMenu->addAction(tr("Track pattern..."));
+  lfsTrackAction->setIcon(
+      themedIcon("list-add", QStyle::SP_FileDialogNewFolder));
   auto *lfsUntrackAction = lfsMenu->addAction(tr("Untrack pattern..."));
+  lfsUntrackAction->setIcon(
+      themedIcon("list-remove", QStyle::SP_DialogDiscardButton));
   auto *lfsPullAction = lfsMenu->addAction(tr("Pull objects"));
+  lfsPullAction->setIcon(themedIcon("go-down", QStyle::SP_ArrowDown));
   auto *lfsPushAction = lfsMenu->addAction(tr("Push objects"));
+  lfsPushAction->setIcon(themedIcon("go-up", QStyle::SP_ArrowUp));
   connect(lfsTrackAction, &QAction::triggered, this, &MainWindow::lfsTrack);
   connect(lfsUntrackAction, &QAction::triggered, this, &MainWindow::lfsUntrack);
   connect(lfsPullAction, &QAction::triggered, this, &MainWindow::lfsPull);
@@ -275,6 +321,7 @@ MainWindow::MainWindow(QWidget *parent)
   statusBar()->addPermanentWidget(m_branchLabel);
 
   auto *actionClone = new QAction(tr("Clone Repository"), this);
+  actionClone->setIcon(themedIcon("folder-download", QStyle::SP_ArrowDown));
   ui->menuFile->insertAction(ui->actionOpen, actionClone);
   actionClone->setStatusTip(tr("Clone a remote repository"));
   actionClone->setShortcut(QKeySequence(QLatin1String("Ctrl+Shift+N")));
@@ -282,18 +329,23 @@ MainWindow::MainWindow(QWidget *parent)
           &MainWindow::onCloneRepository);
 
   auto *actionInit = new QAction(tr("Initialize Repository"), this);
+  actionInit->setIcon(themedIcon("folder-new", QStyle::SP_FileDialogNewFolder));
   ui->menuFile->insertAction(ui->actionOpen, actionInit);
   actionInit->setStatusTip(tr("Create a new Git repository"));
   actionInit->setShortcut(QKeySequence(QLatin1String("Ctrl+N")));
   connect(actionInit, &QAction::triggered, this, &MainWindow::onInitRepository);
 
   auto *editGitignoreAction = new QAction(tr("Edit .gitignore"), this);
+  editGitignoreAction->setIcon(
+      themedIcon("text-x-generic", QStyle::SP_FileIcon));
   editGitignoreAction->setStatusTip(tr("Edit the repository .gitignore file"));
   editGitignoreAction->setShortcut(QKeySequence(QLatin1String("Ctrl+Shift+I")));
   connect(editGitignoreAction, &QAction::triggered, this,
           &MainWindow::editGitignore);
 
   auto *editGitattributesAction = new QAction(tr("Edit .gitattributes"), this);
+  editGitattributesAction->setIcon(
+      themedIcon("text-x-generic", QStyle::SP_FileIcon));
   editGitattributesAction->setStatusTip(
       tr("Edit the repository .gitattributes file"));
   editGitattributesAction->setShortcut(
@@ -401,6 +453,7 @@ MainWindow::MainWindow(QWidget *parent)
 
   pullMenu->addSeparator();
   auto *fetchFromAction = pullMenu->addAction(tr("Fetch from..."));
+  fetchFromAction->setIcon(themedIcon("folder-download", QStyle::SP_ArrowDown));
   fetchFromAction->setStatusTip(tr("Fetch from a selected remote"));
   connect(fetchFromAction, &QAction::triggered, this, [this] {
     if (m_currentPath.isEmpty())
