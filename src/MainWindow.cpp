@@ -1968,21 +1968,25 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
   m_tagsItem = new QTreeWidgetItem(m_repoPanel, {tr("Tags")});
   const QStringList remotes = m_gitExecutor->run(path, {"remote"});
   QSet<QString> remoteTags;
+  bool canCheckLocal = remotes.isEmpty();
   for (const QString &remote : remotes) {
-    for (const QString &line :
-         m_gitExecutor->run(path, {"ls-remote", "--tags", remote})) {
-      const QString ref = line.section(QLatin1Char('\t'), 1, 1);
-      if (ref.startsWith(QLatin1String("refs/tags/"))) {
-        QString tag = ref.mid(10);
-        if (tag.endsWith(QLatin1String("^{}")))
-          tag.chop(3);
-        remoteTags.insert(tag);
+    QString output;
+    if (m_gitExecutor->exec(path, {"ls-remote", "--tags", remote}, &output)) {
+      canCheckLocal = true;
+      for (const QString &line : output.split('\n', Qt::SkipEmptyParts)) {
+        const QString ref = line.section(QLatin1Char('\t'), 1, 1);
+        if (ref.startsWith(QLatin1String("refs/tags/"))) {
+          QString tag = ref.mid(10);
+          if (tag.endsWith(QLatin1String("^{}")))
+            tag.chop(3);
+          remoteTags.insert(tag);
+        }
       }
     }
   }
   for (const QString &tag : m_gitExecutor->run(path, {"tag", "--list"})) {
     auto *tagItem = new QTreeWidgetItem(m_tagsItem, QStringList{tag});
-    if (!remoteTags.contains(tag)) {
+    if (canCheckLocal && !remoteTags.contains(tag)) {
       tagItem->setText(0, tag + tr(" (local)"));
       tagItem->setForeground(0, QColor(160, 160, 160));
     }
@@ -4191,7 +4195,7 @@ void MainWindow::onCommitSelected(QTableWidgetItem *item) {
   QHash<QString, int> removedMap;
   for (const QString &line : m_gitExecutor->run(
            m_currentPath, {"diff-tree", "--no-commit-id", "--numstat", "--root",
-                           "-r", m_selectedCommitSha})) {
+                           "-m", "-r", m_selectedCommitSha})) {
     const QStringList parts = line.split('\t');
     if (parts.size() < 3)
       continue;
@@ -4211,20 +4215,24 @@ void MainWindow::onCommitSelected(QTableWidgetItem *item) {
     }
     if (!okAdd || !okRem)
       continue;
-    addedMap[parts[2]] = added;
-    removedMap[parts[2]] = removed;
+    if (!addedMap.contains(parts[2])) {
+      addedMap[parts[2]] = added;
+      removedMap[parts[2]] = removed;
+    }
   }
 
+  QSet<QString> shownFiles;
   for (const QString &line : m_gitExecutor->run(
            m_currentPath, {"diff-tree", "--no-commit-id", "--name-status",
-                           "--root", "-r", m_selectedCommitSha})) {
+                           "--root", "-m", "-r", m_selectedCommitSha})) {
     const QStringList parts = line.split('\t');
     if (parts.size() < 2)
       continue;
     const QString status = parts.first();
     const QString filePath = parts.last();
-    if (status.isEmpty() || filePath.isEmpty())
+    if (status.isEmpty() || filePath.isEmpty() || shownFiles.contains(filePath))
       continue;
+    shownFiles.insert(filePath);
     m_commitFilesTree->addFile(filePath, status, addedMap.value(filePath, 0),
                                removedMap.value(filePath, 0));
   }

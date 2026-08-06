@@ -96,6 +96,7 @@ QPixmap CommitTableWidget::commitGraphPixmap(const QString &graph,
     painter.setPen(pen);
 
     if (c == QLatin1Char('*') || c == QChar(0x25CF)) {
+      painter.drawLine(x, 0, x, h);
       painter.setBrush(color);
       painter.drawEllipse(QPoint(x, midY), dotRadius, dotRadius);
       painter.setBrush(Qt::NoBrush);
