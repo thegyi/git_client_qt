@@ -174,7 +174,7 @@ static void paintGraphLane(QPainter &p, int type, int x1, int x2, int h,
 
   const int m = (x1 + x2) / 2;
   const int midY = h / 2;
-  const int r = qMin(4, qMin(x2 - x1, h) / 6);
+  const int r = qMax(3, qMin(5, qMin(x2 - x1, h) / 3));
   const int d = 2 * r;
 
   const QPoint P_0(x2, midY);
