@@ -3939,6 +3939,7 @@ void MainWindow::showCommitFilesContextMenu(const QPoint &pos) {
   if (externalDiffAction)
     menu.addSeparator();
   auto *blameAction = menu.addAction(tr("&Blame"));
+  auto *historyAction = menu.addAction(tr("File &History"));
   menu.addSeparator();
   const QString fullPath = m_currentPath + QLatin1Char('/') + path;
   auto *openEditorAction = menu.addAction(tr("Open in &External Editor"));
@@ -3951,6 +3952,8 @@ void MainWindow::showCommitFilesContextMenu(const QPoint &pos) {
                    QStringLiteral("--"), path});
   } else if (selected == blameAction) {
     showBlame(path, m_selectedCommitSha);
+  } else if (selected == historyAction) {
+    showFileHistory(path);
   } else if (selected == openEditorAction) {
     openInExternalEditor(fullPath);
   } else if (selected == openFolderAction) {
@@ -4054,6 +4057,90 @@ void MainWindow::showBlame(const QString &path, const QString &revision) {
 
   dlg.show();
   table->resizeRowsToContents();
+  dlg.exec();
+}
+
+void MainWindow::showFileHistory(const QString &path) {
+  if (m_currentPath.isEmpty() || path.isEmpty())
+    return;
+
+  QDialog dlg(this);
+  dlg.setWindowTitle(tr("History of %1").arg(path));
+  auto *layout = new QVBoxLayout(&dlg);
+  auto *table = new QTableWidget(&dlg);
+  table->setColumnCount(4);
+  table->setHorizontalHeaderLabels(
+      {tr("SHA"), tr("Date"), tr("Author"), tr("Subject")});
+  table->setSelectionBehavior(QAbstractItemView::SelectRows);
+  table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+  table->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+  layout->addWidget(table);
+
+  for (const QString &line : m_gitExecutor->run(
+           m_currentPath,
+           {QStringLiteral("log"), QStringLiteral("--follow"),
+            QStringLiteral("--date=format:%Y-%m-%d %H:%M:%S"),
+            QStringLiteral("--pretty=format:%H%x1f%h%x1f%an%x1f%ad%x1f%s%n"),
+            QStringLiteral("--"), path})) {
+    const QStringList fields = line.split(QChar(0x1f), Qt::SkipEmptyParts);
+    if (fields.size() < 5)
+      continue;
+    const int row = table->rowCount();
+    table->insertRow(row);
+
+    auto *shaItem = new QTableWidgetItem(fields.at(1));
+    shaItem->setData(Qt::UserRole, fields.at(0));
+    shaItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+    table->setItem(row, 0, shaItem);
+
+    auto *dateItem = new QTableWidgetItem(fields.at(3));
+    dateItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+    table->setItem(row, 1, dateItem);
+
+    auto *authorItem = new QTableWidgetItem(fields.at(2));
+    authorItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+    table->setItem(row, 2, authorItem);
+
+    auto *subjectItem = new QTableWidgetItem(fields.at(4));
+    subjectItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+    table->setItem(row, 3, subjectItem);
+  }
+
+  connect(table, &QTableWidget::itemDoubleClicked, this,
+          [&](QTableWidgetItem *item) {
+            if (!item)
+              return;
+            const QString sha =
+                table->item(item->row(), 0)->data(Qt::UserRole).toString();
+            for (int r = 0; r < m_commitTable->rowCount(); ++r) {
+              QTableWidgetItem *shaItem = m_commitTable->item(r, 6);
+              if (shaItem && shaItem->data(Qt::UserRole).toString() == sha) {
+                m_commitTable->selectRow(r);
+                QTableWidgetItem *msgItem = m_commitTable->item(r, 3);
+                if (msgItem) {
+                  m_commitTable->setCurrentItem(msgItem);
+                  m_commitTable->scrollToItem(msgItem,
+                                              QAbstractItemView::EnsureVisible);
+                }
+                dlg.accept();
+                break;
+              }
+            }
+          });
+
+  auto *closeBtn = new QPushButton(tr("Close"), &dlg);
+  connect(closeBtn, &QPushButton::clicked, &dlg, &QDialog::accept);
+  layout->addWidget(closeBtn);
+  dlg.resize(900, 500);
+
+  table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
+  table->setColumnWidth(0, 80);
+  table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Fixed);
+  table->setColumnWidth(1, 130);
+  table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Fixed);
+  table->setColumnWidth(2, 150);
+  table->horizontalHeader()->setStretchLastSection(true);
+
   dlg.exec();
 }
 

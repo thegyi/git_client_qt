@@ -132,6 +132,7 @@ private:
   void diffWithRemote();
   void onGrepResultActivated(QTreeWidgetItem *item, int column);
   void showBlame(const QString &path, const QString &revision = QString());
+  void showFileHistory(const QString &path);
   void showEmptyDiff();
   void showErrorDiff(const QString &message);
   void openInExternalEditor(const QString &filePath) const;
