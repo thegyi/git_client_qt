@@ -15,6 +15,7 @@ struct Commit {
   QString subject;
   QString body;
   QString branch;
+  QStringList parents;
 };
 
 class CommitModel : public QAbstractTableModel {

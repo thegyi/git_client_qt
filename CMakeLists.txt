@@ -21,6 +21,8 @@ set(SOURCES
     src/GitRepository.cpp
     src/DiffPresenter.cpp
     src/CommitModel.cpp
+    src/LaneGraph.cpp
+    src/Lanes.cpp
     src/WorkingTreeModel.cpp
     src/widgets/DiffViewWidget.cpp
     src/widgets/RepoPanelWidget.cpp
@@ -35,6 +37,8 @@ set(HEADERS
     src/GitRepository.h
     src/DiffPresenter.h
     src/CommitModel.h
+    src/LaneGraph.h
+    src/Lanes.h
     src/WorkingTreeModel.h
     src/widgets/DiffViewWidget.h
     src/widgets/RepoPanelWidget.h

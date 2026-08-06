@@ -1,7 +1,7 @@
-#include "GitRepository.h"
 #include "CommitModel.h"
 #include "DiffPresenter.h"
 #include "GitExecutor.h"
+#include "GitRepository.h"
 
 #include <QAbstractTableModel>
 #include <QFile>
@@ -89,21 +89,24 @@ void TestGitModels::testCommitModel() {
 
   const QString rawLog =
       QStringLiteral("*\x1f")
-          .append(QStringLiteral("abc123def456789012345678901234567890abcd\x1f"))
+          .append(
+              QStringLiteral("abc123def456789012345678901234567890abcd\x1f"))
           .append(QStringLiteral("abc1234\x1f"))
           .append(QStringLiteral("Test Author\x1f"))
           .append(QStringLiteral("2024-01-01 12:00:00\x1f"))
           .append(QStringLiteral("2 hours ago\x1f"))
           .append(QStringLiteral("Add feature\x1f"))
           .append(QStringLiteral("Detailed body\x1f"))
-          .append(QStringLiteral("main\x1e"));
+          .append(QStringLiteral("main\x1f"))
+          .append(QStringLiteral("\x1e"));
 
   model.loadLog(rawLog);
   QCOMPARE(model.rowCount(), 1);
   QCOMPARE(model.columnCount(), 7);
 
   const Commit &c = model.commit(0);
-  QCOMPARE(c.fullSha, QStringLiteral("abc123def456789012345678901234567890abcd"));
+  QCOMPARE(c.fullSha,
+           QStringLiteral("abc123def456789012345678901234567890abcd"));
   QCOMPARE(c.shortSha, QStringLiteral("abc1234"));
   QCOMPARE(c.author, QStringLiteral("Test Author"));
   QCOMPARE(c.subject, QStringLiteral("Add feature"));
@@ -119,14 +122,13 @@ void TestGitModels::testCommitModel() {
 void TestGitModels::testDiffPresenter() {
   DiffPresenter presenter;
 
-  const QStringList diff = {
-      QStringLiteral("diff --git a/file.txt b/file.txt"),
-      QStringLiteral("index 123..456 100644"),
-      QStringLiteral("--- a/file.txt"),
-      QStringLiteral("+++ b/file.txt"),
-      QStringLiteral("@@ -1,2 +1,2 @@"),
-      QStringLiteral(" old"),
-      QStringLiteral("+new")};
+  const QStringList diff = {QStringLiteral("diff --git a/file.txt b/file.txt"),
+                            QStringLiteral("index 123..456 100644"),
+                            QStringLiteral("--- a/file.txt"),
+                            QStringLiteral("+++ b/file.txt"),
+                            QStringLiteral("@@ -1,2 +1,2 @@"),
+                            QStringLiteral(" old"),
+                            QStringLiteral("+new")};
 
   const QString htmlWithLinks = presenter.formatDiff(diff, true, false);
   QVERIFY(htmlWithLinks.contains(QStringLiteral("git:hunk:0")));
@@ -137,8 +139,7 @@ void TestGitModels::testDiffPresenter() {
 
   const QStringList lfsPointer = {
       QStringLiteral("version https://git-lfs.github.com/spec/v1"),
-      QStringLiteral("oid sha256:1234"),
-      QStringLiteral("size 42")};
+      QStringLiteral("oid sha256:1234"), QStringLiteral("size 42")};
   QVERIFY(presenter.isLfsPointer(lfsPointer));
 
   const QStringList notLfs = {QStringLiteral("some file content")};

@@ -23,6 +23,8 @@ void CommitModel::loadLog(const QString &rawLog) {
     c.subject = c.subject.trimmed();
     c.body = fields.at(7).trimmed();
     c.branch = fields.at(8);
+    if (fields.size() >= 10)
+      c.parents = fields.at(9).split(QChar(' '), Qt::SkipEmptyParts);
     if (c.branch.startsWith(QStringLiteral("refs/heads/")))
       c.branch = c.branch.mid(11);
     else if (c.branch.startsWith(QStringLiteral("refs/remotes/")))

@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 #include "GitExecutor.h"
+#include "LaneGraph.h"
 #include "Theme.h"
 #include "ui_MainWindow.h"
 #include "widgets/CommitTableWidget.h"
@@ -2096,7 +2097,7 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
                           "--source", "--date-order",
                           "--date=format:%Y-%m-%d %H:%M:%S",
                           "--pretty=format:%x1f%H%x1f%h%x1f%an%x1f%ad%x1f%ar%"
-                          "x1f%s%x1f%b%x1f%S%x1e"});
+                          "x1f%s%x1f%b%x1f%S%x1f%P%x1e"});
   if (p.waitForFinished(10000) && p.exitCode() == 0) {
     const QString output =
         QString::fromLocal8Bit(p.readAllStandardOutput().trimmed());
@@ -2175,6 +2176,15 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
 
     m_commitModel->loadLog(output);
 
+    QString prevGraph;
+    QHash<int, QColor> graphColumnColors;
+
+    QList<Commit> allCommits;
+    allCommits.reserve(m_commitModel->rowCount());
+    for (int i = 0; i < m_commitModel->rowCount(); ++i)
+      allCommits.append(m_commitModel->commit(i));
+    const QVector<QVector<int>> laneRows = LaneGraph::build(allCommits);
+
     for (int r = 0; r < m_commitModel->rowCount(); ++r) {
       const Commit &c = m_commitModel->commit(r);
 
@@ -2224,8 +2234,16 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
       const QFont graphFont = Theme::monospaceFont();
       const int rowHeight =
           m_commitTable->verticalHeader()->defaultSectionSize();
-      const QPixmap graphPixmap = CommitTableWidget::commitGraphPixmap(
-          c.graph, rowHeight, graphFont, tagsBySha.value(c.fullSha));
+      QPixmap graphPixmap;
+      if (r < laneRows.size() && !laneRows.at(r).isEmpty()) {
+        graphPixmap =
+            CommitTableWidget::paintLanes(laneRows.at(r), rowHeight, graphFont,
+                                          bgBrush, tagsBySha.value(c.fullSha));
+      } else {
+        graphPixmap = CommitTableWidget::commitGraphPixmap(
+            c.graph, prevGraph, graphColumnColors, rowHeight, graphFont,
+            tagsBySha.value(c.fullSha));
+      }
       auto *graphItem = new QTableWidgetItem;
       graphItem->setData(Qt::DecorationRole, graphPixmap);
       graphItem->setToolTip(tip);
