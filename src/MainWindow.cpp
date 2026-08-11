@@ -82,7 +82,8 @@
 #include <QProgressDialog>
 #include <QPushButton>
 #include <QRegularExpression>
-#include <QRegularExpressionMatch>
+#include <QScreen>
+#include <QScrollArea>
 #include <QStatusBar>
 #include <QTabBar>
 #include <QTabWidget>
@@ -938,7 +939,12 @@ MainWindow::MainWindow(QWidget *parent)
   rightLayout->setStretchFactor(stagedGroup, 2);
   rightLayout->setStretchFactor(commitFilesGroup, 2);
 
-  rightDock->setWidget(rightWidget);
+  auto *rightScroll = new QScrollArea(this);
+  rightScroll->setWidgetResizable(true);
+  rightScroll->setFrameShape(QFrame::NoFrame);
+  rightScroll->setWidget(rightWidget);
+  rightScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  rightDock->setWidget(rightScroll);
   rightDock->setTitleBarWidget(new QWidget(rightDock));
   rightDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
   rightDock->setMinimumWidth(320);
@@ -996,10 +1002,24 @@ MainWindow::MainWindow(QWidget *parent)
 
   m_commandLogDock = new QDockWidget(tr("Command Log"), this);
   m_commandLogDock->setObjectName(QStringLiteral("commandLogDock"));
+  auto *commandLogWidget = new QWidget(this);
+  auto *commandLogLayout = new QVBoxLayout(commandLogWidget);
+  commandLogLayout->setContentsMargins(4, 4, 4, 4);
+  commandLogLayout->setSpacing(4);
   m_commandLogEdit = new QTextEdit(this);
   m_commandLogEdit->setReadOnly(true);
   m_commandLogEdit->setFont(Theme::monospaceFont());
-  m_commandLogDock->setWidget(m_commandLogEdit);
+  commandLogLayout->addWidget(m_commandLogEdit);
+  auto *runnerLayout = new QHBoxLayout();
+  runnerLayout->setSpacing(4);
+  runnerLayout->addWidget(new QLabel(tr("git"), this));
+  m_arbitraryGitCommandEdit = new QLineEdit(this);
+  m_arbitraryGitCommandEdit->setPlaceholderText(tr("status --short"));
+  runnerLayout->addWidget(m_arbitraryGitCommandEdit);
+  m_runGitCommandButton = new QPushButton(tr("Run"), this);
+  runnerLayout->addWidget(m_runGitCommandButton);
+  commandLogLayout->addLayout(runnerLayout);
+  m_commandLogDock->setWidget(commandLogWidget);
   m_commandLogDock->setFeatures(QDockWidget::DockWidgetMovable |
                                 QDockWidget::DockWidgetFloatable |
                                 QDockWidget::DockWidgetClosable);
@@ -1016,6 +1036,28 @@ MainWindow::MainWindow(QWidget *parent)
               m_commandLogEdit->append(output);
             m_commandLogEdit->append(QString());
           });
+
+  auto runArbitraryGitCommand = [this] {
+    if (!m_arbitraryGitCommandEdit || m_currentPath.isEmpty())
+      return;
+    QString text = m_arbitraryGitCommandEdit->text().trimmed();
+    if (text.isEmpty())
+      return;
+    QStringList tokens = text.split(QRegularExpression(QStringLiteral("\\s+")),
+                                    Qt::SkipEmptyParts);
+    if (!tokens.isEmpty() && tokens.first() == QStringLiteral("git"))
+      tokens.removeFirst();
+    if (tokens.isEmpty())
+      return;
+    m_gitExecutor->exec(m_currentPath, tokens);
+    m_arbitraryGitCommandEdit->clear();
+    if (m_commandLogDock)
+      m_commandLogDock->setVisible(true);
+  };
+  connect(m_runGitCommandButton, &QPushButton::clicked, this,
+          runArbitraryGitCommand);
+  connect(m_arbitraryGitCommandEdit, &QLineEdit::returnPressed, this,
+          runArbitraryGitCommand);
 
   auto *viewMenu = new QMenu(tr("&View"), this);
   menuBar()->insertMenu(ui->menuHelp->menuAction(), viewMenu);

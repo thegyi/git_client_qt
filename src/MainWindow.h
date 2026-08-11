@@ -219,6 +219,8 @@ private:
   QDockWidget *m_grepDock = nullptr;
   QDockWidget *m_commandLogDock = nullptr;
   QTextEdit *m_commandLogEdit = nullptr;
+  QLineEdit *m_arbitraryGitCommandEdit = nullptr;
+  QPushButton *m_runGitCommandButton = nullptr;
   QDockWidget *m_diffDock = nullptr;
   bool m_commitTableResized = false;
   bool m_initialRepositoryLoaded = false;
