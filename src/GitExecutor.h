@@ -16,6 +16,7 @@ public:
                   int acceptedExitCode = 0);
   bool exec(const QString &path, const QStringList &args,
             QString *output = nullptr);
+  QByteArray raw(const QString &path, const QStringList &args) const;
 
 signals:
   void commandLogged(const QString &command, const QString &output,

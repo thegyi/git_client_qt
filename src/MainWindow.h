@@ -29,6 +29,7 @@ class QTextEdit;
 class QCheckBox;
 class QComboBox;
 class QLabel;
+class QWidget;
 class QDockWidget;
 class QTreeWidget;
 class QTableWidget;
@@ -144,6 +145,8 @@ private:
   QString configuredMergeTool() const;
   void showEmptyCommitFiles();
   void showErrorCommitFiles(const QString &message);
+  void showImageDiff(const QString &path, bool staged, bool isNew);
+  bool isImageFile(const QString &path) const;
   void launchGitTool(const QStringList &args, bool reload = false);
   void loadStashes();
   void showStashDiff(const QString &ref);
@@ -195,6 +198,8 @@ private:
   FileTreeWidget *m_untrackedTree = nullptr;
   FileTreeWidget *m_commitFilesTree = nullptr;
   DiffViewWidget *m_diffView = nullptr;
+  QWidget *m_diffContainer = nullptr;
+  QComboBox *m_diffModeCombo = nullptr;
   QLineEdit *m_commitSubject = nullptr;
   QTextEdit *m_commitBody = nullptr;
   QComboBox *m_commitTemplateCombo = nullptr;

@@ -37,6 +37,7 @@
 #include <QGroupBox>
 #include <QGuiApplication>
 #include <QHeaderView>
+#include <QImage>
 #include <QInputDialog>
 #include <QKeySequence>
 #include <QKeySequenceEdit>
@@ -663,6 +664,34 @@ MainWindow::MainWindow(QWidget *parent)
           &MainWindow::onDiffAnchorClicked);
   showEmptyDiff();
 
+  m_diffContainer = new QWidget(this);
+  auto *diffContainerLayout = new QVBoxLayout(m_diffContainer);
+  diffContainerLayout->setContentsMargins(0, 0, 0, 0);
+  diffContainerLayout->setSpacing(0);
+  auto *diffModeLayout = new QHBoxLayout();
+  diffModeLayout->setContentsMargins(4, 4, 4, 4);
+  diffModeLayout->setSpacing(4);
+  diffModeLayout->addWidget(new QLabel(tr("Diff mode:"), this));
+  m_diffModeCombo = new QComboBox(this);
+  m_diffModeCombo->addItem(tr("Unified"));
+  m_diffModeCombo->addItem(tr("Side-by-side"));
+  m_diffModeCombo->setCurrentIndex(
+      m_diffPresenter->mode() == DiffPresenter::DiffMode::Unified ? 0 : 1);
+  diffModeLayout->addWidget(m_diffModeCombo);
+  diffModeLayout->addStretch();
+  diffContainerLayout->addLayout(diffModeLayout);
+  diffContainerLayout->addWidget(m_diffView, 1);
+  connect(m_diffModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+          this, [this](int index) {
+            if (!m_diffPresenter || !m_diffView)
+              return;
+            m_diffPresenter->setMode(index == 0
+                                         ? DiffPresenter::DiffMode::Unified
+                                         : DiffPresenter::DiffMode::SideBySide);
+            if (m_diffPresenter->hasCurrent())
+              m_diffView->setHtml(m_diffPresenter->formatCurrent());
+          });
+
   m_centralStack = new QStackedWidget(this);
   auto *welcomeWidget = new QWidget(m_centralStack);
   auto *welcomeLayout = new QVBoxLayout(welcomeWidget);
@@ -698,7 +727,7 @@ MainWindow::MainWindow(QWidget *parent)
 
   m_viewTabWidget = new QTabWidget(this);
   m_viewTabWidget->addTab(m_commitTable, tr("History"));
-  m_viewTabWidget->addTab(m_diffView, tr("Diff"));
+  m_viewTabWidget->addTab(m_diffContainer, tr("Diff"));
 
   m_centralStack->addWidget(welcomeWidget);
   m_centralStack->addWidget(m_viewTabWidget);
@@ -4217,7 +4246,7 @@ void MainWindow::diffWithCommit(const QString &fromSha) {
                           tr("No changes to show for this selection."));
   } else {
     if (m_viewTabWidget)
-      m_viewTabWidget->setCurrentWidget(m_diffView);
+      m_viewTabWidget->setCurrentWidget(m_diffContainer);
   }
   m_diffView->setHtml(m_diffPresenter->formatDiff(diff));
   statusBar()->showMessage(
@@ -4595,7 +4624,7 @@ void MainWindow::onCommitFileClicked(QTreeWidgetItem *item, int column) {
                              ? m_diffPresenter->lfsPointerHtml(diff)
                              : m_diffPresenter->formatDiff(diff);
     if (m_viewTabWidget)
-      m_viewTabWidget->setCurrentWidget(m_diffView);
+      m_viewTabWidget->setCurrentWidget(m_diffContainer);
     m_diffView->setHtml(html);
   }
 }
@@ -4625,7 +4654,7 @@ void MainWindow::diffWithRemote() {
     } else {
       if (m_diffDock)
         if (m_viewTabWidget)
-          m_viewTabWidget->setCurrentWidget(m_diffView);
+          m_viewTabWidget->setCurrentWidget(m_diffContainer);
       m_diffView->setHtml(m_diffPresenter->formatDiff(diff));
     }
   }
@@ -4986,7 +5015,7 @@ void MainWindow::onStashClicked(QTreeWidgetItem *item, int column) {
                             tr("No changes to show for this selection."));
     } else {
       if (m_viewTabWidget)
-        m_viewTabWidget->setCurrentWidget(m_diffView);
+        m_viewTabWidget->setCurrentWidget(m_diffContainer);
     }
     m_diffView->setHtml(m_diffPresenter->formatDiff(diff));
   }
@@ -5013,6 +5042,11 @@ void MainWindow::onFileClicked(QTreeWidgetItem *item, int column) {
   const bool isNew =
       isFolder ? false : (item->data(0, Qt::UserRole).toString() == "?");
 
+  if (!isFolder && isImageFile(path)) {
+    showImageDiff(path, staged, isNew);
+    return;
+  }
+
   if (isNew) {
     if (staged) {
       const QStringList diff =
@@ -5029,7 +5063,7 @@ void MainWindow::onFileClicked(QTreeWidgetItem *item, int column) {
                                  ? m_diffPresenter->lfsPointerHtml(diff)
                                  : m_diffPresenter->formatDiff(diff);
         if (m_viewTabWidget)
-          m_viewTabWidget->setCurrentWidget(m_diffView);
+          m_viewTabWidget->setCurrentWidget(m_diffContainer);
         m_diffView->setHtml(html);
       }
     } else {
@@ -5048,7 +5082,7 @@ void MainWindow::onFileClicked(QTreeWidgetItem *item, int column) {
                                  ? m_diffPresenter->lfsPointerHtml(diff)
                                  : m_diffPresenter->formatDiff(diff);
         if (m_viewTabWidget)
-          m_viewTabWidget->setCurrentWidget(m_diffView);
+          m_viewTabWidget->setCurrentWidget(m_diffContainer);
         m_diffView->setHtml(html);
       }
     }
@@ -5074,9 +5108,82 @@ void MainWindow::onFileClicked(QTreeWidgetItem *item, int column) {
                              ? m_diffPresenter->lfsPointerHtml(diff)
                              : m_diffPresenter->formatDiff(diff, true, staged);
     if (m_viewTabWidget)
-      m_viewTabWidget->setCurrentWidget(m_diffView);
+      m_viewTabWidget->setCurrentWidget(m_diffContainer);
     m_diffView->setHtml(html);
   }
+}
+
+bool MainWindow::isImageFile(const QString &path) const {
+  static const QRegularExpression imageRe(
+      QStringLiteral("\\.(png|jpg|jpeg|gif|bmp|webp)$"),
+      QRegularExpression::CaseInsensitiveOption);
+  return imageRe.match(path).hasMatch();
+}
+
+void MainWindow::showImageDiff(const QString &path, bool staged, bool isNew) {
+  if (!m_diffView || !m_gitExecutor || m_currentPath.isEmpty())
+    return;
+
+  QImage oldImage;
+  QImage newImage;
+
+  if (staged) {
+    if (!isNew)
+      oldImage = QImage::fromData(
+          m_gitExecutor->raw(m_currentPath, {"show", "HEAD:" + path}));
+    newImage = QImage::fromData(
+        m_gitExecutor->raw(m_currentPath, {"show", ":0:" + path}));
+  } else {
+    if (!isNew)
+      oldImage = QImage::fromData(
+          m_gitExecutor->raw(m_currentPath, {"show", "HEAD:" + path}));
+    const QString fullPath = m_currentPath + QLatin1Char('/') + path;
+    QFile f(fullPath);
+    if (f.open(QIODevice::ReadOnly))
+      newImage = QImage::fromData(f.readAll());
+  }
+
+  if (oldImage.isNull() && newImage.isNull()) {
+    m_diffView->showEmpty(tr("No diff"), tr("Could not load image content."));
+    return;
+  }
+
+  const int maxW =
+      qMax(160, m_diffView->width() > 0 ? m_diffView->width() / 2 - 24 : 400);
+  if (!oldImage.isNull())
+    oldImage = oldImage.scaled(maxW, maxW, Qt::KeepAspectRatio,
+                               Qt::SmoothTransformation);
+  if (!newImage.isNull())
+    newImage = newImage.scaled(maxW, maxW, Qt::KeepAspectRatio,
+                               Qt::SmoothTransformation);
+
+  m_diffView->document()->addResource(QTextDocument::ImageResource,
+                                      QUrl(QStringLiteral("diff://old")),
+                                      oldImage);
+  m_diffView->document()->addResource(QTextDocument::ImageResource,
+                                      QUrl(QStringLiteral("diff://new")),
+                                      newImage);
+
+  const QString oldCell = oldImage.isNull()
+                              ? tr("(no old image)")
+                              : QStringLiteral("<img src=\"diff://old\" />");
+  const QString newCell = newImage.isNull()
+                              ? tr("(no new image)")
+                              : QStringLiteral("<img src=\"diff://new\" />");
+
+  const QString html =
+      QStringLiteral("<html>"
+                     "<body style=\"background-color:#1e1e1e; color:#cccccc; "
+                     "font-family:sans-serif; padding:8px;\">"
+                     "<table width=\"100%\" height=\"100%\"><tr>"
+                     "<td align=\"center\" valign=\"top\" width=\"50%\">%1</td>"
+                     "<td align=\"center\" valign=\"top\" width=\"50%\">%2</td>"
+                     "</tr></table></body></html>")
+          .arg(oldCell, newCell);
+
+  if (m_viewTabWidget)
+    m_viewTabWidget->setCurrentWidget(m_diffContainer);
+  m_diffView->setHtml(html);
 }
 
 void MainWindow::onDiffAnchorClicked(const QUrl &url) {

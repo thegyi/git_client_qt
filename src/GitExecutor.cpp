@@ -56,3 +56,13 @@ bool GitExecutor::exec(const QString &path, const QStringList &args,
   emit commandLogged(args.join(QLatin1Char(' ')), allOutput, code);
   return code == 0;
 }
+
+QByteArray GitExecutor::raw(const QString &path,
+                            const QStringList &args) const {
+  QProcess p;
+  p.start(QStringLiteral("git"),
+          QStringList{QStringLiteral("-C"), path} + args);
+  if (!p.waitForFinished(10000))
+    return {};
+  return p.exitCode() == 0 ? p.readAllStandardOutput() : QByteArray();
+}
