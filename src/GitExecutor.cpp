@@ -1,68 +1,95 @@
 #include "GitExecutor.h"
 
+#include <QEventLoop>
 #include <QProcess>
 #include <QString>
 
-GitExecutor::GitExecutor(QObject *parent) : QObject(parent) {}
+GitExecutor::GitExecutor(QObject *parent)
+    : QObject(parent), m_commandRunning(false) {}
+
+GitExecutor::CommandResult GitExecutor::runCommand(const QString &path,
+                                                   const QStringList &args,
+                                                   int acceptedExitCode) {
+  if (m_commandRunning) {
+    CommandResult res;
+    res.allOutput = tr("Git command already running");
+    res.exitCode = -1;
+    emit commandLogged(args.join(QLatin1Char(' ')), res.allOutput, -1);
+    return res;
+  }
+  m_commandRunning = true;
+
+  CommandResult res;
+  QProcess p;
+  m_currentProcess = &p;
+  const QString command = QStringLiteral("git -C ") + path +
+                          QStringLiteral(" ") + args.join(QLatin1Char(' '));
+
+  p.start(QStringLiteral("git"),
+          QStringList{QStringLiteral("-C"), path} + args);
+
+  emit commandStarted(command);
+
+  if (!p.waitForStarted(5000)) {
+    res.allOutput = tr("Failed to start git: %1").arg(p.errorString());
+    res.exitCode = -1;
+    m_currentProcess = nullptr;
+    m_commandRunning = false;
+    emit commandLogged(args.join(QLatin1Char(' ')), res.allOutput, -1);
+    emit commandFinished(command, res.exitCode, false);
+    return res;
+  }
+
+  QEventLoop loop;
+  connect(&p, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+          &loop, &QEventLoop::quit);
+  connect(&p, &QProcess::errorOccurred, &loop, &QEventLoop::quit);
+
+  loop.exec();
+
+  if (p.state() != QProcess::NotRunning) {
+    p.kill();
+    p.waitForFinished(1000);
+  }
+
+  m_currentProcess = nullptr;
+
+  res.exitCode = p.exitCode();
+  res.standardOutput = p.readAllStandardOutput();
+  res.standardError = p.readAllStandardError();
+  res.allOutput =
+      QString::fromLocal8Bit(res.standardOutput + res.standardError).trimmed();
+  res.ok = (p.exitStatus() == QProcess::NormalExit) &&
+           (res.exitCode == 0 || res.exitCode == acceptedExitCode);
+  m_commandRunning = false;
+
+  emit commandLogged(args.join(QLatin1Char(' ')), res.allOutput, res.exitCode);
+  emit commandFinished(command, res.exitCode, res.ok);
+  return res;
+}
 
 QStringList GitExecutor::run(const QString &path, const QStringList &args,
                              int acceptedExitCode) {
-  QProcess p;
-  p.start(QStringLiteral("git"),
-          QStringList{QStringLiteral("-C"), path} + args);
-  if (!p.waitForFinished(10000))
+  const CommandResult res = runCommand(path, args, acceptedExitCode);
+  if (!res.ok)
     return {};
-  const int code = p.exitCode();
-  const QString cmd = QStringLiteral("git -C ") + path + QStringLiteral(" ") +
-                      args.join(QLatin1Char(' '));
-  const QString output =
-      QString::fromLocal8Bit(p.readAllStandardOutput().trimmed());
-  emit commandLogged(cmd, output, code);
-  if (code != 0 && code != acceptedExitCode)
-    return {};
-  return output.split('\n', Qt::SkipEmptyParts);
+  return res.allOutput.split('\n', Qt::SkipEmptyParts);
 }
 
 bool GitExecutor::exec(const QString &path, const QStringList &args,
                        QString *output) {
-  QProcess p;
-  p.start(QStringLiteral("git"),
-          QStringList{QStringLiteral("-C"), path} + args);
-  if (!p.waitForStarted(5000)) {
-    const QString err = tr("Failed to start git: %1").arg(p.errorString());
-    if (output)
-      *output = err;
-    emit commandLogged(args.join(QLatin1Char(' ')), err, -1);
-    return false;
-  }
-  if (!p.waitForFinished(30000)) {
-    p.kill();
-    p.waitForFinished(1000);
-    const QString allOutput = QString::fromLocal8Bit(p.readAllStandardOutput() +
-                                                     p.readAllStandardError());
-    const QString err =
-        tr("Git command timed out or was killed.\n%1").arg(allOutput);
-    if (output) {
-      *output = err;
-    }
-    emit commandLogged(args.join(QLatin1Char(' ')), err, p.exitCode());
-    return false;
-  }
-  const QString allOutput = QString::fromLocal8Bit(p.readAllStandardOutput() +
-                                                   p.readAllStandardError());
+  const CommandResult res = runCommand(path, args, 0);
   if (output)
-    *output = allOutput;
-  const int code = p.exitCode();
-  emit commandLogged(args.join(QLatin1Char(' ')), allOutput, code);
-  return code == 0;
+    *output = res.allOutput;
+  return res.ok;
 }
 
-QByteArray GitExecutor::raw(const QString &path,
-                            const QStringList &args) const {
-  QProcess p;
-  p.start(QStringLiteral("git"),
-          QStringList{QStringLiteral("-C"), path} + args);
-  if (!p.waitForFinished(10000))
-    return {};
-  return p.exitCode() == 0 ? p.readAllStandardOutput() : QByteArray();
+QByteArray GitExecutor::raw(const QString &path, const QStringList &args) {
+  const CommandResult res = runCommand(path, args, 0);
+  return res.ok ? res.standardOutput : QByteArray();
+}
+
+void GitExecutor::cancel() {
+  if (m_currentProcess)
+    m_currentProcess->kill();
 }
