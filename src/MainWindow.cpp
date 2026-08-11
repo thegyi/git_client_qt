@@ -473,8 +473,7 @@ MainWindow::MainWindow(QWidget *parent)
       return;
     const QStringList remotes = m_gitExecutor->run(m_currentPath, {"remote"});
     if (remotes.isEmpty()) {
-      QMessageBox::warning(this, tr("No remotes"),
-                           tr("There are no remotes to fetch from."));
+      statusBar()->showMessage(tr("There are no remotes to fetch from."), 0);
       return;
     }
     bool ok;
@@ -562,7 +561,7 @@ MainWindow::MainWindow(QWidget *parent)
               ->run(m_currentPath, {"rev-parse", "--abbrev-ref", "HEAD"})
               .value(0);
       if (currentBranch.isEmpty()) {
-        QMessageBox::warning(this, tr("Pull failed"), tr("No current branch"));
+        statusBar()->showMessage(tr("No current branch"), 0);
         return;
       }
       const QString remote =
@@ -583,8 +582,7 @@ MainWindow::MainWindow(QWidget *parent)
         const QStringList remotes =
             m_gitExecutor->run(m_currentPath, {"remote"});
         if (remotes.isEmpty()) {
-          QMessageBox::warning(this, tr("No remote"),
-                               tr("There is no remote to pull from."));
+          statusBar()->showMessage(tr("There is no remote to pull from."), 0);
           return;
         }
         pullArgs << remotes.first() << currentBranch;
@@ -595,8 +593,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     p.start(QStringLiteral("git"), pullArgs);
     if (!p.waitForStarted(5000)) {
-      QMessageBox::warning(this, tr("Pull failed"),
-                           tr("Could not start git process"));
+      statusBar()->showMessage(tr("Could not start git process"), 0);
       return;
     }
 
@@ -615,7 +612,8 @@ MainWindow::MainWindow(QWidget *parent)
     } else {
       if (output.isEmpty())
         output = p.errorString();
-      QMessageBox::warning(this, tr("Pull failed"), output);
+      statusBar()->showMessage(output.isEmpty() ? tr("Pull failed") : output,
+                               0);
     }
   });
 
@@ -1113,8 +1111,8 @@ MainWindow::MainWindow(QWidget *parent)
     if (m_gitExecutor->exec(path, {"rev-parse", "--git-dir"})) {
       loadRepository(path);
     } else {
-      QMessageBox::warning(this, tr("Not a Git repository"),
-                           tr("The selected folder is not a Git repository."));
+      statusBar()->showMessage(
+          tr("The selected folder is not a Git repository."), 0);
     }
   });
 
@@ -1310,8 +1308,7 @@ bool MainWindow::performPush(const QStringList &extraArgs) {
 
   const QString currentBranch = currentBranchName();
   if (currentBranch.isEmpty()) {
-    QMessageBox::warning(this, tr("Push failed"),
-                         tr("Could not determine the current branch."));
+    statusBar()->showMessage(tr("Could not determine the current branch."), 0);
     return false;
   }
 
@@ -1353,8 +1350,7 @@ bool MainWindow::performPush(const QStringList &extraArgs) {
 
   p.start(QStringLiteral("git"), args);
   if (!p.waitForStarted(5000)) {
-    QMessageBox::warning(this, tr("Push failed"),
-                         tr("Could not start git process"));
+    statusBar()->showMessage(tr("Could not start git process"), 0);
     return false;
   }
 
@@ -1371,23 +1367,14 @@ bool MainWindow::performPush(const QStringList &extraArgs) {
     loadRepository(m_currentPath);
     statusBar()->showMessage(tr("Push finished"));
     if (!output.isEmpty()) {
-      QMessageBox msg(this);
-      msg.setWindowTitle(tr("Push output"));
-      msg.setText(tr("Push completed successfully."));
-      msg.setDetailedText(output);
-      msg.setStandardButtons(QMessageBox::Ok);
-      msg.exec();
+      statusBar()->showMessage(
+          tr("Push completed successfully: %1").arg(output), 0);
     }
     return true;
   }
 
-  QMessageBox msg(this);
-  msg.setWindowTitle(tr("Push failed"));
-  msg.setText(tr("Git push failed."));
-  msg.setDetailedText(output);
-  msg.setIcon(QMessageBox::Warning);
-  msg.setStandardButtons(QMessageBox::Ok);
-  msg.exec();
+  statusBar()->showMessage(output.isEmpty() ? tr("Git push failed.") : output,
+                           0);
   return false;
 }
 
@@ -2691,8 +2678,7 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
     } else if (selected == pushAction) {
       const QStringList remotes = m_gitExecutor->run(m_currentPath, {"remote"});
       if (remotes.isEmpty()) {
-        QMessageBox::warning(this, tr("No remotes"),
-                             tr("There are no remotes to push to."));
+        statusBar()->showMessage(tr("There are no remotes to push to."), 0);
         return;
       }
       bool okRemote;
@@ -2731,8 +2717,8 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
         remoteBranches.append(line.trimmed());
       }
       if (remoteBranches.isEmpty()) {
-        QMessageBox::warning(this, tr("No remote branches"),
-                             tr("There are no remote branches to track."));
+        statusBar()->showMessage(tr("There are no remote branches to track."),
+                                 0);
         return;
       }
       bool ok;
@@ -2789,15 +2775,16 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
         statusBar()->showMessage(
             tr("Merged %1 into %2").arg(branchName, currentBranch));
       } else {
-        QMessageBox::warning(this, tr("Merge failed"), output);
+        statusBar()->showMessage(output.isEmpty() ? tr("Merge failed") : output,
+                                 0);
       }
     } else if (selected == rebaseAction) {
       QStringList branches = m_gitExecutor->run(
           m_currentPath, {"branch", "--format=%(refname:short)"});
       branches.removeOne(branchName);
       if (branches.isEmpty()) {
-        QMessageBox::warning(this, tr("No target branch"),
-                             tr("There are no other branches to rebase onto."));
+        statusBar()->showMessage(
+            tr("There are no other branches to rebase onto."), 0);
         return;
       }
 
@@ -2815,7 +2802,8 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
         statusBar()->showMessage(
             tr("Rebased %1 onto %2").arg(branchName, targetBranch));
       } else {
-        QMessageBox::warning(this, tr("Rebase failed"), output);
+        statusBar()->showMessage(
+            output.isEmpty() ? tr("Rebase failed") : output, 0);
       }
     } else if (selected == deleteAction) {
       if (m_gitExecutor->exec(m_currentPath, {"branch", "-d", branchName})) {
@@ -2978,15 +2966,15 @@ void MainWindow::showTagContextMenu(const QPoint &pos) {
                                 QLineEdit::Normal, QString(), &ok);
       if (ok && !tagName.isEmpty()) {
         if (tagName.contains(QLatin1Char(' '))) {
-          QMessageBox::warning(this, tr("Invalid tag name"),
-                               tr("Tag names cannot contain spaces."));
+          statusBar()->showMessage(tr("Tag names cannot contain spaces."), 0);
         } else {
           QString output;
           if (m_gitExecutor->exec(m_currentPath, {"tag", tagName}, &output)) {
             loadRepository(m_currentPath);
             statusBar()->showMessage(tr("Tag %1 created").arg(tagName));
           } else {
-            QMessageBox::warning(this, tr("Create tag failed"), output);
+            statusBar()->showMessage(
+                output.isEmpty() ? tr("Create tag failed") : output, 0);
           }
         }
       }
@@ -3014,12 +3002,12 @@ void MainWindow::showTagContextMenu(const QPoint &pos) {
         loadRepository(m_currentPath);
         statusBar()->showMessage(tr("Checked out tag %1").arg(tagName));
       } else {
-        QMessageBox::warning(this, tr("Checkout failed"), output);
+        statusBar()->showMessage(
+            output.isEmpty() ? tr("Checkout failed") : output, 0);
       }
     } else if (pushAction && selected == pushAction) {
       if (pushableRemotes.isEmpty()) {
-        QMessageBox::warning(this, tr("No remotes"),
-                             tr("There are no remotes to push to."));
+        statusBar()->showMessage(tr("There are no remotes to push to."), 0);
       } else {
         bool okRemote;
         const QString remote = QInputDialog::getItem(
@@ -3078,16 +3066,18 @@ void MainWindow::showTagContextMenu(const QPoint &pos) {
                                       QStringLiteral(":refs/tags/") + tagName},
                                      tr("Deleting tag %1 from %2...")
                                          .arg(tagName, remoteToDelete))) {
-              QMessageBox::warning(this, tr("Remote tag delete failed"),
-                                   tr("Failed to delete tag %1 from remote %2.")
-                                       .arg(tagName, remoteToDelete));
+              statusBar()->showMessage(
+                  tr("Failed to delete tag %1 from remote %2.")
+                      .arg(tagName, remoteToDelete),
+                  0);
             }
           }
         }
         loadRepository(m_currentPath);
         statusBar()->showMessage(tr("Tag %1 deleted").arg(tagName));
       } else {
-        QMessageBox::warning(this, tr("Delete tag failed"), localOutput);
+        statusBar()->showMessage(
+            localOutput.isEmpty() ? tr("Delete tag failed") : localOutput, 0);
       }
     }
   }
@@ -4052,7 +4042,8 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
       loadRepository(m_currentPath);
       statusBar()->showMessage(tr("Checked out %1").arg(sha.left(7)));
     } else {
-      QMessageBox::warning(this, tr("Checkout failed"), output);
+      statusBar()->showMessage(
+          output.isEmpty() ? tr("Checkout failed") : output, 0);
     }
     return;
   }
@@ -4066,8 +4057,7 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
       return;
 
     if (branchName.contains(QLatin1Char(' '))) {
-      QMessageBox::warning(this, tr("Invalid branch name"),
-                           tr("Branch names cannot contain spaces."));
+      statusBar()->showMessage(tr("Branch names cannot contain spaces."), 0);
       return;
     }
 
@@ -4104,9 +4094,8 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
   if (selected == squashAction || selected == fixupAction) {
     const QString base = sha + QLatin1String("~2");
     if (m_gitExecutor->run(m_currentPath, {"rev-parse", base}).isEmpty()) {
-      QMessageBox::warning(
-          this, tr("Cannot rebase"),
-          tr("Selected commit has no previous commit to combine with."));
+      statusBar()->showMessage(
+          tr("Selected commit has no previous commit to combine with."), 0);
       return;
     }
     const QString shortSha =
@@ -4134,9 +4123,10 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
       statusBar()->showMessage(
           tr("%1d %2 into previous").arg(command, sha.left(7)));
     } else {
-      QMessageBox::warning(this, tr("Rebase failed"),
-                           QString::fromLocal8Bit(p.readAllStandardError() +
-                                                  p.readAllStandardOutput()));
+      statusBar()->showMessage(
+          QString::fromLocal8Bit(p.readAllStandardError() +
+                                 p.readAllStandardOutput()),
+          0);
     }
     return;
   }
@@ -4161,7 +4151,8 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
         loadRepository(m_currentPath);
         statusBar()->showMessage(tr("Reset %1 to %2").arg(mode, sha.left(7)));
       } else {
-        QMessageBox::warning(this, tr("Reset failed"), output);
+        statusBar()->showMessage(output.isEmpty() ? tr("Reset failed") : output,
+                                 0);
       }
     }
     return;
@@ -4188,8 +4179,7 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
     return;
 
   if (tagName.contains(QLatin1Char(' '))) {
-    QMessageBox::warning(this, tr("Invalid tag name"),
-                         tr("Tag names cannot contain spaces."));
+    statusBar()->showMessage(tr("Tag names cannot contain spaces."), 0);
     return;
   }
 
@@ -4198,7 +4188,8 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
     loadRepository(m_currentPath);
     statusBar()->showMessage(tr("Tag %1 created").arg(tagName));
   } else {
-    QMessageBox::warning(this, tr("Create tag failed"), output);
+    statusBar()->showMessage(
+        output.isEmpty() ? tr("Create tag failed") : output, 0);
   }
 }
 
@@ -4631,14 +4622,12 @@ void MainWindow::onCommitFileClicked(QTreeWidgetItem *item, int column) {
 
 void MainWindow::diffWithRemote() {
   if (m_currentPath.isEmpty()) {
-    QMessageBox::warning(this, tr("No repository"),
-                         tr("Open a repository first."));
+    statusBar()->showMessage(tr("Open a repository first."), 0);
     return;
   }
 
   if (m_remoteHeadSha.isEmpty()) {
-    QMessageBox::warning(this, tr("No remote"),
-                         tr("No upstream/remote HEAD is set."));
+    statusBar()->showMessage(tr("No upstream/remote HEAD is set."), 0);
     return;
   }
 
@@ -4664,8 +4653,7 @@ void MainWindow::diffWithRemote() {
 
 void MainWindow::undoLastCommit() {
   if (m_currentPath.isEmpty()) {
-    QMessageBox::warning(this, tr("No repository"),
-                         tr("Open a repository first."));
+    statusBar()->showMessage(tr("Open a repository first."), 0);
     return;
   }
 
@@ -4701,8 +4689,10 @@ void MainWindow::checkForUpdates() {
     statusBar()->clearMessage();
 
     if (reply->error() != QNetworkReply::NoError) {
-      QMessageBox::warning(this, tr("Update check failed"),
-                           reply->errorString());
+      statusBar()->showMessage(reply->errorString().isEmpty()
+                                   ? tr("Update check failed")
+                                   : reply->errorString(),
+                               0);
       reply->deleteLater();
       return;
     }
@@ -4719,8 +4709,8 @@ void MainWindow::checkForUpdates() {
     reply->deleteLater();
 
     if (latestVersion.isEmpty()) {
-      QMessageBox::warning(this, tr("Update check failed"),
-                           tr("Could not parse the latest release version."));
+      statusBar()->showMessage(
+          tr("Could not parse the latest release version."), 0);
       return;
     }
 
@@ -4738,14 +4728,14 @@ void MainWindow::checkForUpdates() {
         QDesktopServices::openUrl(QUrl(htmlUrl));
       }
     } else if (latest == current) {
-      QMessageBox::information(this, tr("Up to date"),
-                               tr("You are running the latest version (%1).")
-                                   .arg(QStringLiteral(APP_VERSION)));
+      statusBar()->showMessage(tr("You are running the latest version (%1).")
+                                   .arg(QStringLiteral(APP_VERSION)),
+                               0);
     } else {
-      QMessageBox::information(
-          this, tr("Up to date"),
+      statusBar()->showMessage(
           tr("You are running a newer or development version (%1).")
-              .arg(QStringLiteral(APP_VERSION)));
+              .arg(QStringLiteral(APP_VERSION)),
+          0);
     }
   });
 }
@@ -4757,9 +4747,8 @@ void MainWindow::onInitRepository() {
     return;
 
   if (m_gitExecutor->exec(path, {"rev-parse", "--git-dir"})) {
-    QMessageBox::warning(this, tr("Already a Git repository"),
-                         tr("The selected folder is already a Git "
-                            "repository."));
+    statusBar()->showMessage(
+        tr("The selected folder is already a Git repository."), 0);
     return;
   }
 
@@ -4792,8 +4781,7 @@ void MainWindow::onCloneRepository() {
 
   const QString localPath = parentDir + '/' + repoName;
   if (QFileInfo(localPath).exists()) {
-    QMessageBox::warning(this, tr("Folder already exists"),
-                         tr("The destination folder already exists."));
+    statusBar()->showMessage(tr("The destination folder already exists."), 0);
     return;
   }
 
@@ -4947,8 +4935,8 @@ void MainWindow::showWorktreeContextMenu(const QPoint &pos) {
   } else if (selected == removeAction) {
     if (QFileInfo(path).canonicalFilePath() ==
         QFileInfo(m_currentPath).canonicalFilePath()) {
-      QMessageBox::warning(this, tr("Worktree"),
-                           tr("Cannot remove the currently open worktree."));
+      statusBar()->showMessage(tr("Cannot remove the currently open worktree."),
+                               0);
       return;
     }
     if (m_gitExecutor->exec(m_currentPath, {"worktree", "remove", path})) {
@@ -5255,8 +5243,7 @@ void MainWindow::onDiffAnchorClicked(const QUrl &url) {
 
 void MainWindow::editGitignore() {
   if (m_currentPath.isEmpty()) {
-    QMessageBox::warning(this, tr("No repository"),
-                         tr("Open a repository first."));
+    statusBar()->showMessage(tr("Open a repository first."), 0);
     return;
   }
 
@@ -5292,16 +5279,14 @@ void MainWindow::editGitignore() {
       out.close();
       loadWorkingTree();
     } else {
-      QMessageBox::warning(this, tr("Error"),
-                           tr("Could not write .gitignore."));
+      statusBar()->showMessage(tr("Could not write .gitignore."), 0);
     }
   }
 }
 
 void MainWindow::editGitattributes() {
   if (m_currentPath.isEmpty()) {
-    QMessageBox::warning(this, tr("No repository"),
-                         tr("Open a repository first."));
+    statusBar()->showMessage(tr("Open a repository first."), 0);
     return;
   }
 
@@ -5338,16 +5323,14 @@ void MainWindow::editGitattributes() {
       out.close();
       loadWorkingTree();
     } else {
-      QMessageBox::warning(this, tr("Error"),
-                           tr("Could not write .gitattributes."));
+      statusBar()->showMessage(tr("Could not write .gitattributes."), 0);
     }
   }
 }
 
 void MainWindow::showCommitHooksAndTemplates() {
   if (m_currentPath.isEmpty()) {
-    QMessageBox::warning(this, tr("No repository"),
-                         tr("Open a repository first."));
+    statusBar()->showMessage(tr("Open a repository first."), 0);
     return;
   }
 
@@ -5448,8 +5431,7 @@ void MainWindow::showCommitHooksAndTemplates() {
       f.close();
       statusBar()->showMessage(tr("Hook %1 saved").arg(fileName));
     } else {
-      QMessageBox::warning(this, tr("Error"),
-                           tr("Could not write hook %1.").arg(fileName));
+      statusBar()->showMessage(tr("Could not write hook %1.").arg(fileName), 0);
     }
   });
 
@@ -5468,8 +5450,7 @@ void MainWindow::showCommitHooksAndTemplates() {
       m_gitExecutor->exec(m_currentPath,
                           {"config", "commit.template", templatePathText});
     } else {
-      QMessageBox::warning(this, tr("Error"),
-                           tr("Could not write commit template."));
+      statusBar()->showMessage(tr("Could not write commit template."), 0);
     }
   }
 }
@@ -5564,8 +5545,7 @@ void MainWindow::showSubmodulesContextMenu(const QPoint &pos) {
 
 void MainWindow::initSubmodules() {
   if (m_currentPath.isEmpty()) {
-    QMessageBox::warning(this, tr("No repository"),
-                         tr("Open a repository first."));
+    statusBar()->showMessage(tr("Open a repository first."), 0);
     return;
   }
 
@@ -5580,8 +5560,7 @@ void MainWindow::initSubmodules() {
 
 void MainWindow::updateSubmodules() {
   if (m_currentPath.isEmpty()) {
-    QMessageBox::warning(this, tr("No repository"),
-                         tr("Open a repository first."));
+    statusBar()->showMessage(tr("Open a repository first."), 0);
     return;
   }
 
@@ -5596,8 +5575,7 @@ void MainWindow::updateSubmodules() {
 
 void MainWindow::syncSubmodules() {
   if (m_currentPath.isEmpty()) {
-    QMessageBox::warning(this, tr("No repository"),
-                         tr("Open a repository first."));
+    statusBar()->showMessage(tr("Open a repository first."), 0);
     return;
   }
 
@@ -5612,8 +5590,7 @@ void MainWindow::syncSubmodules() {
 
 void MainWindow::addSubmodule() {
   if (m_currentPath.isEmpty()) {
-    QMessageBox::warning(this, tr("No repository"),
-                         tr("Open a repository first."));
+    statusBar()->showMessage(tr("Open a repository first."), 0);
     return;
   }
 
@@ -5641,8 +5618,7 @@ void MainWindow::addSubmodule() {
 
 void MainWindow::openSubmodule() {
   if (m_currentPath.isEmpty()) {
-    QMessageBox::warning(this, tr("No repository"),
-                         tr("Open a repository first."));
+    statusBar()->showMessage(tr("Open a repository first."), 0);
     return;
   }
 
@@ -5650,8 +5626,7 @@ void MainWindow::openSubmodule() {
       m_currentPath, {"config", "--file", QStringLiteral(".gitmodules"),
                       "--get-regexp", "^submodule\\..*\\.path$"});
   if (configLines.isEmpty()) {
-    QMessageBox::warning(this, tr("No submodules"),
-                         tr("This repository has no submodules."));
+    statusBar()->showMessage(tr("This repository has no submodules."), 0);
     return;
   }
 
@@ -5673,8 +5648,7 @@ void MainWindow::openSubmodule() {
 
 void MainWindow::showRepositorySettings() {
   if (m_currentPath.isEmpty()) {
-    QMessageBox::warning(this, tr("No repository"),
-                         tr("Open a repository first."));
+    statusBar()->showMessage(tr("Open a repository first."), 0);
     return;
   }
 
@@ -5875,8 +5849,7 @@ void MainWindow::showHunkStaging(const QString &path, bool unstage) {
   }
 
   if (patchLines.size() == headerLines.size()) {
-    QMessageBox::information(this, tr("No hunks selected"),
-                             tr("Select at least one hunk to apply."));
+    statusBar()->showMessage(tr("Select at least one hunk to apply."), 0);
     return;
   }
 
@@ -5884,7 +5857,7 @@ void MainWindow::showHunkStaging(const QString &path, bool unstage) {
 
   QTemporaryFile tempFile;
   if (!tempFile.open()) {
-    QMessageBox::warning(this, tr("Error"), tr("Could not create patch file."));
+    statusBar()->showMessage(tr("Could not create patch file."), 0);
     return;
   }
   tempFile.write(patch.toUtf8());
@@ -5911,9 +5884,8 @@ void MainWindow::showInteractiveRebase(const QString &baseSha) {
       m_currentPath, {"log", baseSha + QLatin1String("..HEAD"), "--reverse",
                       "--pretty=format:%H %s"});
   if (logLines.isEmpty()) {
-    QMessageBox::information(
-        this, tr("Nothing to rebase"),
-        tr("There are no commits after the selected one."));
+    statusBar()->showMessage(tr("There are no commits after the selected one."),
+                             0);
     return;
   }
 
@@ -6060,7 +6032,8 @@ void MainWindow::showInteractiveRebase(const QString &baseSha) {
     loadRepository(m_currentPath);
     statusBar()->showMessage(tr("Interactive rebase completed"));
   } else {
-    QMessageBox::warning(this, tr("Interactive rebase failed"), output);
+    statusBar()->showMessage(
+        output.isEmpty() ? tr("Interactive rebase failed") : output, 0);
   }
 }
 
@@ -6168,8 +6141,8 @@ void MainWindow::showConflictResolver(const QString &operation) {
       dlg.accept();
       statusBar()->showMessage(tr("%1 completed").arg(operation));
     } else {
-      QMessageBox::warning(&dlg, tr("Continue failed"),
-                           QString::fromLocal8Bit(p.readAllStandardError()));
+      statusBar()->showMessage(QString::fromLocal8Bit(p.readAllStandardError()),
+                               0);
       refresh();
     }
   });
@@ -6201,7 +6174,8 @@ void MainWindow::cherryPickCommit(const QString &sha) {
   const QStringList conflicted = m_gitExecutor->run(
       m_currentPath, {"diff", "--name-only", "--diff-filter=U"});
   if (conflicted.isEmpty()) {
-    QMessageBox::warning(this, tr("Cherry-pick failed"), output);
+    statusBar()->showMessage(
+        output.isEmpty() ? tr("Cherry-pick failed") : output, 0);
     return;
   }
 
@@ -6222,7 +6196,8 @@ void MainWindow::revertCommit(const QString &sha) {
   const QStringList conflicted = m_gitExecutor->run(
       m_currentPath, {"diff", "--name-only", "--diff-filter=U"});
   if (conflicted.isEmpty()) {
-    QMessageBox::warning(this, tr("Revert failed"), output);
+    statusBar()->showMessage(output.isEmpty() ? tr("Revert failed") : output,
+                             0);
     return;
   }
 
@@ -6254,8 +6229,7 @@ void MainWindow::startBisect() {
   const QString bad = badEdit->text().trimmed();
   const QString good = goodEdit->text().trimmed();
   if (bad.isEmpty() || good.isEmpty()) {
-    QMessageBox::warning(this, tr("Bisect"),
-                         tr("Both bad and good commits are required."));
+    statusBar()->showMessage(tr("Both bad and good commits are required."), 0);
     return;
   }
 
@@ -6365,8 +6339,8 @@ void MainWindow::lfsPush() {
               {"config", QStringLiteral("branch.%1.remote").arg(currentBranch)})
           .value(0);
   if (currentBranch.isEmpty() || remote.isEmpty()) {
-    QMessageBox::warning(this, tr("LFS push"),
-                         tr("No upstream configured for the current branch."));
+    statusBar()->showMessage(
+        tr("No upstream configured for the current branch."), 0);
     return;
   }
 
@@ -6380,15 +6354,14 @@ void MainWindow::lfsPush() {
 
 void MainWindow::showReflog() {
   if (m_currentPath.isEmpty()) {
-    QMessageBox::warning(this, tr("No repository"),
-                         tr("Open a repository first."));
+    statusBar()->showMessage(tr("Open a repository first."), 0);
     return;
   }
 
   const QStringList raw =
       m_gitExecutor->run(m_currentPath, {QStringLiteral("reflog")});
   if (raw.isEmpty()) {
-    QMessageBox::information(this, tr("No reflog"), tr("Reflog is empty."));
+    statusBar()->showMessage(tr("Reflog is empty."), 0);
     return;
   }
 
@@ -6497,8 +6470,7 @@ void MainWindow::showReflog() {
 
 void MainWindow::applyPatch() {
   if (m_currentPath.isEmpty()) {
-    QMessageBox::warning(this, tr("No repository"),
-                         tr("Open a repository first."));
+    statusBar()->showMessage(tr("Open a repository first."), 0);
     return;
   }
 
@@ -6633,7 +6605,7 @@ void MainWindow::createPatchFromCommit(const QString &sha) {
     out.close();
     statusBar()->showMessage(tr("Patch saved to %1").arg(fileName));
   } else {
-    QMessageBox::warning(this, tr("Error"), tr("Could not write patch file."));
+    statusBar()->showMessage(tr("Could not write patch file."), 0);
   }
 }
 

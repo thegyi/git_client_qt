@@ -40,6 +40,9 @@ class QTabWidget;
 class QSplitter;
 class QNetworkAccessManager;
 class SpellCheckHighlighter;
+class QProcess;
+class QProgressBar;
+class QProgressDialog;
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -214,6 +217,7 @@ private:
   QLabel *m_branchLabel = nullptr;
   QToolButton *m_pushButton = nullptr;
   QPushButton *m_undoButton = nullptr;
+  QProgressBar *m_commandProgressBar = nullptr;
   QToolButton *m_pullButton = nullptr;
   QMenu *m_recentMenu = nullptr;
   QStringList m_pullArgs;
