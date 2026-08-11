@@ -28,6 +28,7 @@ set(SOURCES
     src/widgets/RepoPanelWidget.cpp
     src/widgets/CommitTableWidget.cpp
     src/widgets/FileTreeWidget.cpp
+    src/widgets/SpellCheckHighlighter.cpp
 )
 
 set(HEADERS
@@ -43,6 +44,7 @@ set(HEADERS
     src/widgets/DiffViewWidget.h
     src/widgets/RepoPanelWidget.h
     src/widgets/CommitTableWidget.h
+    src/widgets/SpellCheckHighlighter.h
     src/widgets/FileTreeWidget.h
 )
 

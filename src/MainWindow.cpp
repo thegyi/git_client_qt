@@ -7,6 +7,7 @@
 #include "widgets/DiffViewWidget.h"
 #include "widgets/FileTreeWidget.h"
 #include "widgets/RepoPanelWidget.h"
+#include "widgets/SpellCheckHighlighter.h"
 
 #include <QAbstractButton>
 #include <QAbstractItemView>
@@ -833,6 +834,21 @@ MainWindow::MainWindow(QWidget *parent)
 
   auto *messageGroup = new QGroupBox(tr("Commit Message"), this);
   auto *messageLayout = new QVBoxLayout(messageGroup);
+  auto *templateLayout = new QHBoxLayout();
+  templateLayout->addWidget(new QLabel(tr("Template:"), this));
+  m_commitTemplateCombo = new QComboBox(this);
+  m_commitTemplateCombo->addItem(tr("Select..."));
+  m_commitTemplateCombo->addItems(
+      {QStringLiteral("feat: "), QStringLiteral("fix: "),
+       QStringLiteral("docs: "), QStringLiteral("style: "),
+       QStringLiteral("refactor: "), QStringLiteral("test: "),
+       QStringLiteral("chore: ")});
+  m_commitTemplateCombo->setSizePolicy(QSizePolicy::Expanding,
+                                       QSizePolicy::Fixed);
+  templateLayout->addWidget(m_commitTemplateCombo);
+  m_commitSpellCheckCheckBox = new QCheckBox(tr("Spell-check"), this);
+  templateLayout->addWidget(m_commitSpellCheckCheckBox);
+  messageLayout->addLayout(templateLayout);
   m_commitSubject = new QLineEdit(this);
   m_commitSubject->setPlaceholderText(tr("Short summary"));
   connect(m_commitSubject, &QLineEdit::textChanged, this,
@@ -864,6 +880,45 @@ MainWindow::MainWindow(QWidget *parent)
           &MainWindow::onCommitClicked);
   messageLayout->addWidget(m_commitButton);
   rightLayout->addWidget(messageGroup);
+
+  m_spellCheckHighlighter = new SpellCheckHighlighter(m_commitBody->document());
+  QSettings settings(QLatin1String("GitClientQt"),
+                     QLatin1String("GitClientQt"));
+  const QStringList dictPaths = {
+      settings.value(QLatin1String("commitMessage/dictionaryPath")).toString(),
+      QStringLiteral("/usr/share/dict/words"),
+      QStringLiteral("/usr/share/dict/american-english")};
+  QString foundDict;
+  for (const QString &p : dictPaths) {
+    if (!p.isEmpty() && QFileInfo::exists(p)) {
+      foundDict = p;
+      break;
+    }
+  }
+  m_spellCheckHighlighter->setDictionary(foundDict);
+  const bool spellCheckEnabled =
+      settings.value(QLatin1String("commitMessage/spellCheckEnabled"), true)
+          .toBool();
+  m_commitSpellCheckCheckBox->setChecked(spellCheckEnabled);
+  m_commitSpellCheckCheckBox->setEnabled(!foundDict.isEmpty());
+  m_spellCheckHighlighter->setEnabled(spellCheckEnabled &&
+                                      !foundDict.isEmpty());
+  connect(m_commitSpellCheckCheckBox, &QCheckBox::toggled, this,
+          [this](bool checked) {
+            if (m_spellCheckHighlighter)
+              m_spellCheckHighlighter->setEnabled(checked);
+            QSettings(QLatin1String("GitClientQt"),
+                      QLatin1String("GitClientQt"))
+                .setValue(QLatin1String("commitMessage/spellCheckEnabled"),
+                          checked);
+          });
+  connect(m_commitTemplateCombo, QOverload<int>::of(&QComboBox::activated),
+          this, [this](int index) {
+            if (index <= 0 || !m_commitTemplateCombo || !m_commitSubject)
+              return;
+            m_commitSubject->insert(m_commitTemplateCombo->itemText(index));
+            m_commitTemplateCombo->setCurrentIndex(0);
+          });
 
   auto *commitFilesGroup = new QGroupBox(tr("Commit Files"), this);
   commitFilesGroup->setSizePolicy(QSizePolicy::Expanding,

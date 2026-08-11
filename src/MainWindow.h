@@ -27,6 +27,7 @@ class QToolButton;
 class QLineEdit;
 class QTextEdit;
 class QCheckBox;
+class QComboBox;
 class QLabel;
 class QDockWidget;
 class QTreeWidget;
@@ -37,6 +38,7 @@ class QTabBar;
 class QTabWidget;
 class QSplitter;
 class QNetworkAccessManager;
+class SpellCheckHighlighter;
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -195,6 +197,9 @@ private:
   DiffViewWidget *m_diffView = nullptr;
   QLineEdit *m_commitSubject = nullptr;
   QTextEdit *m_commitBody = nullptr;
+  QComboBox *m_commitTemplateCombo = nullptr;
+  QCheckBox *m_commitSpellCheckCheckBox = nullptr;
+  SpellCheckHighlighter *m_spellCheckHighlighter = nullptr;
   QPushButton *m_commitButton = nullptr;
   QCheckBox *m_amendCheckBox = nullptr;
   QLabel *m_amendWarningLabel = nullptr;
