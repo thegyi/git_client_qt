@@ -1,6 +1,7 @@
 #include <QApplication>
 #include <QByteArray>
 #include <QDir>
+#include <QIcon>
 #include <QPalette>
 #include <QSettings>
 #include <QStyleFactory>
@@ -103,6 +104,9 @@ int main(int argc, char *argv[]) {
 #endif
 
   QApplication app(argc, argv);
+  app.setApplicationName(QStringLiteral("GitClientQt"));
+  app.setDesktopFileName(QStringLiteral("GitClientQt"));
+  app.setWindowIcon(QIcon(QStringLiteral(":/icons/appicon.svg")));
   applyTheme();
   MainWindow window;
   window.show();

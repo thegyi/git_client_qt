@@ -31,7 +31,8 @@ CommitTableWidget::CommitTableWidget(QWidget *parent) : QTableWidget(parent) {
       "QTableView::item:hover { background-color: rgba(127, 127, 127, 40); }"
       "QTableView::item:selected { background-color: palette(highlight); "
       "color: palette(highlighted-text); }"));
-  setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+  setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
+  setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
   setAlternatingRowColors(true);
   setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 }

@@ -7,6 +7,7 @@ void WorkingTreeModel::load(const QStringList &staged,
                             const QStringList &untracked) {
   m_staged.clear();
   m_unstaged.clear();
+  m_untracked.clear();
 
   for (const QString &line : staged) {
     const QStringList parts = line.split(QLatin1Char('\t'));
@@ -23,13 +24,14 @@ void WorkingTreeModel::load(const QStringList &staged,
   }
 
   for (const QString &filePath : untracked) {
-    m_unstaged.append({filePath, QStringLiteral("?")});
+    m_untracked.append({filePath, QStringLiteral("?")});
   }
 }
 
 void WorkingTreeModel::clear() {
   m_staged.clear();
   m_unstaged.clear();
+  m_untracked.clear();
 }
 
 const QList<FileStatus> &WorkingTreeModel::stagedFiles() const {
@@ -38,4 +40,8 @@ const QList<FileStatus> &WorkingTreeModel::stagedFiles() const {
 
 const QList<FileStatus> &WorkingTreeModel::unstagedFiles() const {
   return m_unstaged;
+}
+
+const QList<FileStatus> &WorkingTreeModel::untrackedFiles() const {
+  return m_untracked;
 }

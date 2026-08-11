@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=GitClientQt
+Comment=Qt-based Git client
+Exec=GitClientQt %F
+Icon=GitClientQt
+Type=Application
+Terminal=false
+Categories=Development;RevisionControl;
+StartupNotify=true

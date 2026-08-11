@@ -10,8 +10,8 @@ set(CMAKE_AUTOUIC ON)
 
 set(CMAKE_AUTOUIC_SEARCH_PATHS "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Network Concurrent)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Network Concurrent)
+find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Network Concurrent Svg)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Network Concurrent Svg)
 
 set(SOURCES
     src/main.cpp
@@ -74,6 +74,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt${QT_VERSION_MAJOR}::Widgets
     Qt${QT_VERSION_MAJOR}::Network
     Qt${QT_VERSION_MAJOR}::Concurrent
+    Qt${QT_VERSION_MAJOR}::Svg
 )
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE
@@ -82,6 +83,12 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
 install(TARGETS ${PROJECT_NAME}
         RUNTIME DESTINATION bin
         BUNDLE DESTINATION .)
+
+install(FILES resources/GitClientQt.desktop
+        DESTINATION share/applications)
+install(FILES resources/icons/appicon.svg
+        DESTINATION share/pixmaps
+        RENAME GitClientQt.svg)
 
 set(CPACK_PACKAGE_NAME "GitClientQt")
 set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")

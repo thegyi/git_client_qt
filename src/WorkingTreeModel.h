@@ -20,10 +20,12 @@ public:
 
   const QList<FileStatus> &stagedFiles() const;
   const QList<FileStatus> &unstagedFiles() const;
+  const QList<FileStatus> &untrackedFiles() const;
 
 private:
   QList<FileStatus> m_staged;
   QList<FileStatus> m_unstaged;
+  QList<FileStatus> m_untracked;
 };
 
 #endif // WORKINGTREEMODEL_H

@@ -19,6 +19,8 @@
 #include <QColorDialog>
 #include <QComboBox>
 #include <QCryptographicHash>
+#include <QCursor>
+#include <QDebug>
 #include <QDesktopServices>
 #include <QDialogButtonBox>
 #include <QDockWidget>
@@ -109,6 +111,10 @@ MainWindow::MainWindow(QWidget *parent)
   m_commitModel = new CommitModel(this);
   m_workingTreeModel = new WorkingTreeModel(this);
   ui->setupUi(this);
+  setMinimumSize(400, 300);
+  statusBar()->setObjectName(QStringLiteral("statusBar"));
+  statusBar()->setSizeGripEnabled(true);
+  statusBar()->show();
   ui->menuFile->setTitle(tr("&File"));
   ui->menuEdit->setTitle(tr("&Edit"));
   ui->menuHelp->setTitle(tr("&Help"));
@@ -640,6 +646,11 @@ MainWindow::MainWindow(QWidget *parent)
   m_commitTable->setContextMenuPolicy(Qt::CustomContextMenu);
   connect(m_commitTable, &QTableWidget::customContextMenuRequested, this,
           &MainWindow::showCommitContextMenu);
+  m_commitTable->horizontalHeader()->setContextMenuPolicy(
+      Qt::CustomContextMenu);
+  connect(m_commitTable->horizontalHeader(),
+          &QHeaderView::customContextMenuRequested, this,
+          &MainWindow::showCommitTableHeaderContextMenu);
 
   m_diffView = new DiffViewWidget(this);
   m_diffView->setMinimumHeight(120);
@@ -809,6 +820,16 @@ MainWindow::MainWindow(QWidget *parent)
 
   stagedLayout->addWidget(m_stagedTree);
   rightLayout->addWidget(stagedGroup);
+
+  auto *untrackedGroup = new QGroupBox(tr("Untracked Files"), this);
+  auto *untrackedLayout = new QVBoxLayout(untrackedGroup);
+  untrackedGroup->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+  m_untrackedTree = new FileTreeWidget(QString(), this);
+  m_untrackedTree->setMinimumHeight(120);
+  connect(m_untrackedTree, &QTreeWidget::customContextMenuRequested, this,
+          &MainWindow::showUntrackedContextMenu);
+  untrackedLayout->addWidget(m_untrackedTree);
+  rightLayout->addWidget(untrackedGroup);
 
   auto *messageGroup = new QGroupBox(tr("Commit Message"), this);
   auto *messageLayout = new QVBoxLayout(messageGroup);
@@ -1290,10 +1311,16 @@ void MainWindow::saveDockAndColumnState(bool includeGeometry) {
 
   if (m_commitTable) {
     QVariantList widths;
-    for (int c = 0; c < m_commitTable->columnCount(); ++c)
+    QVariantList visibility;
+    for (int c = 0; c < m_commitTable->columnCount(); ++c) {
       widths << m_commitTable->columnWidth(c);
+      visibility << !m_commitTable->isColumnHidden(c);
+    }
     settings.setValue(
         QLatin1String("dockLayouts/global/columnWidths/commitTable"), widths);
+    settings.setValue(
+        QLatin1String("dockLayouts/global/columnVisibility/commitTable"),
+        visibility);
   }
   if (m_unstagedTree)
     settings.setValue(base + QLatin1String("headers/unstagedTree"),
@@ -1319,18 +1346,17 @@ bool MainWindow::restoreDockAndColumnState(bool includeGeometry) {
     if (!geometry.isEmpty())
       restoreGeometry(geometry);
 
-    bool onScreen = false;
+    QScreen *screen = QGuiApplication::screenAt(pos());
+    if (!screen)
+      screen = QGuiApplication::primaryScreen();
     const QRect windowRect = QRect(pos(), size());
-    for (QScreen *screen : QGuiApplication::screens()) {
-      if (screen->availableGeometry().intersects(windowRect)) {
-        onScreen = true;
-        break;
-      }
-    }
-    if (!onScreen) {
-      const QRect screenRect =
-          QGuiApplication::primaryScreen()->availableGeometry();
-      setGeometry(screenRect.adjusted(100, 100, -100, -100));
+    const QRect available = screen ? screen->availableGeometry() : QRect();
+    if (available.isValid() && !available.contains(windowRect)) {
+      const int w = qMax(640, qMin(1280, available.width() - 200));
+      const int h = qMax(480, qMin(800, available.height() - 200));
+      const int x = available.x() + (available.width() - w) / 2;
+      const int y = available.y() + (available.height() - h) / 2;
+      setGeometry(x, y, w, h);
     }
   }
 
@@ -1392,6 +1418,14 @@ bool MainWindow::restoreDockAndColumnState(bool includeGeometry) {
             .toList();
     for (int c = 0; c < widths.size() && c < m_commitTable->columnCount(); ++c)
       m_commitTable->setColumnWidth(c, widths.at(c).toInt());
+    const QVariantList visibility =
+        settings
+            .value(QLatin1String(
+                "dockLayouts/global/columnVisibility/commitTable"))
+            .toList();
+    for (int c = 0; c < visibility.size() && c < m_commitTable->columnCount();
+         ++c)
+      m_commitTable->setColumnHidden(c, !visibility.at(c).toBool());
     restoredCommitTableWidths = !widths.isEmpty();
   }
 
@@ -1928,9 +1962,32 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
 
   m_localBranchesItem =
       new QTreeWidgetItem(m_repoPanel, {tr("Local Branches")});
-  for (const QString &branch :
-       m_gitExecutor->run(path, {"branch", "--format=%(refname:short)"})) {
-    auto *item = new QTreeWidgetItem(m_localBranchesItem, QStringList{branch});
+  for (const QString &line : m_gitExecutor->run(
+           path, {QStringLiteral("for-each-ref"),
+                  QStringLiteral("--format=%(refname:short)|%(upstream:track)"),
+                  QStringLiteral("refs/heads")})) {
+    const QStringList fields = line.split(QLatin1Char('|'));
+    const QString branch = fields.value(0);
+    const QString track = fields.value(1).trimmed();
+    int ahead = 0;
+    int behind = 0;
+    if (!track.isEmpty()) {
+      static const QRegularExpression aheadRe(
+          QStringLiteral("ahead\\s+(\\d+)"));
+      static const QRegularExpression behindRe(
+          QStringLiteral("behind\\s+(\\d+)"));
+      const QRegularExpressionMatch aheadMatch = aheadRe.match(track);
+      const QRegularExpressionMatch behindMatch = behindRe.match(track);
+      if (aheadMatch.hasMatch())
+        ahead = aheadMatch.captured(1).toInt();
+      if (behindMatch.hasMatch())
+        behind = behindMatch.captured(1).toInt();
+    }
+    QString display = branch;
+    if (ahead > 0 || behind > 0)
+      display += QStringLiteral(" [+%1 -%2]").arg(ahead).arg(behind);
+    auto *item = new QTreeWidgetItem(m_localBranchesItem, QStringList{display});
+    item->setData(0, Qt::UserRole, branch);
     if (branch == currentBranch) {
       QFont font = item->font(0);
       font.setBold(true);
@@ -1997,7 +2054,7 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
 
   m_submodulesItem = new QTreeWidgetItem(m_repoPanel, {tr("Submodules")});
   for (const QString &line :
-       m_gitExecutor->run(path, {"submodule", "status"})) {
+       m_gitExecutor->run(path, {"submodule", "status", "--recursive"})) {
     if (line.length() < 2)
       continue;
     const QChar status = line.at(0);
@@ -2007,7 +2064,7 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
       continue;
     const QString subPath = rest.mid(shaEnd + 1).section('(', 0, 0).trimmed();
     QString text = subPath;
-    if (status == '+')
+    if (status == '+' || status == 'U')
       text += tr(" (needs update)");
     else if (status == '-')
       text += tr(" (not initialized)");
@@ -2304,7 +2361,7 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
     saveDockAndColumnState(false);
   m_initialRepositoryLoaded = true;
 
-  const int tableWidth =
+  int tableWidth =
       m_commitTable->horizontalHeader()->length() +
       QApplication::style()->pixelMetric(QStyle::PM_ScrollBarExtent) +
       2 * m_commitTable->frameWidth();
@@ -2312,6 +2369,11 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
     const int leftWidth = qBound(
         80, m_repoPanel ? m_repoPanel->sizeHint().width() + 20 : 180, 200);
     const int rightWidth = 320;
+    QScreen *screen = QGuiApplication::primaryScreen();
+    const int screenWidth = screen ? screen->availableGeometry().width() : 1280;
+    const int maxTableWidth =
+        qMax(400, screenWidth - leftWidth - rightWidth - 80);
+    tableWidth = qMin(tableWidth, maxTableWidth);
     if (m_mainSplitter)
       m_mainSplitter->setSizes({leftWidth, tableWidth, rightWidth});
     resize(leftWidth + tableWidth + rightWidth, height());
@@ -2464,7 +2526,9 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
     return;
   }
 
-  const QString branchName = item->text(0);
+  const QString branchName =
+      isLocal ? item->data(0, Qt::UserRole).toString()
+              : item->parent()->text(0) + QLatin1Char('/') + item->text(0);
   QMenu menu(this);
   QAction *selected = nullptr;
 
@@ -2746,10 +2810,10 @@ void MainWindow::onBranchClicked(QTreeWidgetItem *item, int column) {
 
   QString branch;
   if (m_localBranchesItem && item->parent() == m_localBranchesItem) {
-    branch = item->text(0);
+    branch = item->data(0, Qt::UserRole).toString();
   } else if (m_remoteBranchesItem && item->parent() &&
              item->parent()->parent() == m_remoteBranchesItem) {
-    branch = item->parent()->text(0) + "/" + item->text(0);
+    branch = item->parent()->text(0) + QLatin1Char('/') + item->text(0);
   } else {
     return;
   }
@@ -2976,6 +3040,8 @@ void MainWindow::loadWorkingTree() {
     m_unstagedTree->clear();
   if (m_stagedTree)
     m_stagedTree->clear();
+  if (m_untrackedTree)
+    m_untrackedTree->clear();
   if (m_currentPath.isEmpty()) {
     return;
   }
@@ -3032,29 +3098,32 @@ void MainWindow::loadWorkingTree() {
   for (const FileStatus &fs : m_workingTreeModel->unstagedFiles()) {
     int added = unstagedAdded.value(fs.first, -1);
     int removed = unstagedRemoved.value(fs.first, -1);
-    if (fs.second == QStringLiteral("?") && added < 0) {
-      const QString fullPath = m_currentPath + QLatin1Char('/') + fs.first;
-      added = 0;
-      QFile f(fullPath);
-      if (f.open(QIODevice::ReadOnly)) {
-        char buffer[4096];
-        qint64 n;
-        while ((n = f.read(buffer, sizeof(buffer))) > 0) {
-          for (qint64 i = 0; i < n; ++i) {
-            if (buffer[i] == '\n')
-              ++added;
-          }
+    m_unstagedTree->addFile(fs.first, fs.second, added, removed);
+  }
+
+  for (const FileStatus &fs : m_workingTreeModel->untrackedFiles()) {
+    int added = 0;
+    const QString fullPath = m_currentPath + QLatin1Char('/') + fs.first;
+    QFile f(fullPath);
+    if (f.open(QIODevice::ReadOnly)) {
+      char buffer[4096];
+      qint64 n;
+      while ((n = f.read(buffer, sizeof(buffer))) > 0) {
+        for (qint64 i = 0; i < n; ++i) {
+          if (buffer[i] == '\n')
+            ++added;
         }
       }
-      removed = 0;
     }
-    m_unstagedTree->addFile(fs.first, fs.second, added, removed);
+    m_untrackedTree->addFile(fs.first, fs.second, added, 0);
   }
 
   if (m_stagedTree)
     m_stagedTree->collapseAll();
   if (m_unstagedTree)
     m_unstagedTree->collapseAll();
+  if (m_untrackedTree)
+    m_untrackedTree->collapseAll();
   updateCommitButton();
   restoreSelectedFiles();
 }
@@ -3456,6 +3525,15 @@ void MainWindow::showUnstagedContextMenu(const QPoint &pos) {
     openEditorAction = menu.addAction(tr("Open in &External Editor"));
   auto *openFolderAction = menu.addAction(tr("Open Containing &Folder"));
   auto *revertAction = menu.addAction(tr("&Revert to HEAD"));
+  QAction *rmAction = nullptr;
+  QAction *mvAction = nullptr;
+  if (hasTracked) {
+    rmAction = menu.addAction(tr("Git &rm"));
+    mvAction = menu.addAction(tr("Git &mv"));
+  }
+  QAction *cleanAction = nullptr;
+  if (hasNew)
+    cleanAction = menu.addAction(tr("Git &clean"));
 
   QAction *selected = menu.exec(m_unstagedTree->mapToGlobal(pos));
   if (!selected)
@@ -3516,6 +3594,82 @@ void MainWindow::showUnstagedContextMenu(const QPoint &pos) {
       if (m_diffView)
         showEmptyDiff();
     }
+  } else if (selected == rmAction) {
+    const QStringList rmArgs = isFolder ? QStringList{"rm", "-rf", "--", path}
+                                        : QStringList{"rm", "-f", "--", path};
+    if (m_gitExecutor->exec(m_currentPath, rmArgs)) {
+      loadWorkingTree();
+      if (m_diffView)
+        showEmptyDiff();
+    }
+  } else if (selected == mvAction) {
+    bool ok;
+    const QString newPath = QInputDialog::getText(
+        this, tr("Git mv"), tr("New path:"), QLineEdit::Normal, path, &ok);
+    if (ok && !newPath.isEmpty() && newPath != path) {
+      if (m_gitExecutor->exec(m_currentPath, {"mv", "--", path, newPath})) {
+        loadWorkingTree();
+        if (m_diffView)
+          showEmptyDiff();
+      }
+    }
+  } else if (selected == cleanAction) {
+    if (m_gitExecutor->exec(m_currentPath, {"clean", "-fd", "--", path})) {
+      loadWorkingTree();
+      if (m_diffView)
+        showEmptyDiff();
+    }
+  }
+}
+
+void MainWindow::showUntrackedContextMenu(const QPoint &pos) {
+  QTreeWidgetItem *item = m_untrackedTree->itemAt(pos);
+  if (!item || m_currentPath.isEmpty())
+    return;
+
+  const bool isFolder = item->childCount() > 0;
+  const QString path = m_untrackedTree->itemPath(item);
+
+  QMenu menu(this);
+  QAction *stageAction =
+      menu.addAction(isFolder ? tr("&Stage folder") : tr("&Stage file"));
+  QAction *ignoreAction = nullptr;
+  if (isFolder)
+    ignoreAction = menu.addAction(tr("&Ignore all files in this folder"));
+  else
+    ignoreAction = menu.addAction(tr("&Ignore"));
+  QAction *cleanAction = menu.addAction(tr("Git &clean"));
+
+  menu.addSeparator();
+  const QString fullPath = m_currentPath + QLatin1Char('/') + path;
+  auto *openFolderAction = menu.addAction(tr("Open Containing &Folder"));
+
+  QAction *selected = menu.exec(m_untrackedTree->mapToGlobal(pos));
+  if (!selected)
+    return;
+
+  if (selected == stageAction) {
+    if (m_gitExecutor->exec(m_currentPath, {"add", path})) {
+      loadWorkingTree();
+    }
+  } else if (selected == ignoreAction) {
+    const QString pattern = isFolder ? path + '/' : path;
+    QFile gitignore(m_currentPath + "/.gitignore");
+    if (gitignore.open(QIODevice::Append | QIODevice::Text)) {
+      QTextStream out(&gitignore);
+      out << pattern << "\n";
+      gitignore.close();
+    }
+    loadWorkingTree();
+  } else if (selected == cleanAction) {
+    if (m_gitExecutor->exec(m_currentPath, {"clean", "-fd", "--", path})) {
+      loadWorkingTree();
+      if (m_diffView)
+        showEmptyDiff();
+    }
+  } else if (selected == openFolderAction) {
+    QDesktopServices::openUrl(
+        QUrl::fromLocalFile(QFileInfo(fullPath).dir().absolutePath()));
   }
 }
 
@@ -3648,6 +3802,8 @@ void MainWindow::showStagedContextMenu(const QPoint &pos) {
     openEditorAction = menu.addAction(tr("Open in &External Editor"));
   auto *openFolderAction = menu.addAction(tr("Open Containing &Folder"));
   auto *revertAction = menu.addAction(tr("&Revert to HEAD"));
+  auto *rmAction = menu.addAction(tr("Git &rm"));
+  auto *mvAction = menu.addAction(tr("Git &mv"));
 
   QAction *selected = menu.exec(m_stagedTree->mapToGlobal(pos));
   if (!selected)
@@ -3673,6 +3829,25 @@ void MainWindow::showStagedContextMenu(const QPoint &pos) {
       loadWorkingTree();
       if (m_diffView)
         showEmptyDiff();
+    }
+  } else if (selected == rmAction) {
+    const QStringList rmArgs = isFolder ? QStringList{"rm", "-rf", "--", path}
+                                        : QStringList{"rm", "-f", "--", path};
+    if (m_gitExecutor->exec(m_currentPath, rmArgs)) {
+      loadWorkingTree();
+      if (m_diffView)
+        showEmptyDiff();
+    }
+  } else if (selected == mvAction) {
+    bool ok;
+    const QString newPath = QInputDialog::getText(
+        this, tr("Git mv"), tr("New path:"), QLineEdit::Normal, path, &ok);
+    if (ok && !newPath.isEmpty() && newPath != path) {
+      if (m_gitExecutor->exec(m_currentPath, {"mv", "--", path, newPath})) {
+        loadWorkingTree();
+        if (m_diffView)
+          showEmptyDiff();
+      }
     }
   }
 }
@@ -3716,7 +3891,15 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
       sha == m_localHeadSha ? menu.addAction(tr("&Undo last commit (soft)"))
                             : nullptr;
 
-  QAction *selected = menu.exec(m_commitTable->viewport()->mapToGlobal(pos));
+  qDebug() << "showCommitContextMenu pos=" << pos
+           << "tableGlobal=" << m_commitTable->mapToGlobal(pos)
+           << "viewportGlobal=" << m_commitTable->viewport()->mapToGlobal(pos)
+           << "cursorGlobal=" << QCursor::pos() << "sha=" << sha;
+  QAction *selected = menu.exec(QCursor::pos());
+  qDebug() << "showCommitContextMenu selected=" << selected;
+  if (selected) {
+    qDebug() << "  selected text=" << selected->text();
+  }
 
   if (selected == copyFullShaAction) {
     QApplication::clipboard()->setText(sha);
@@ -3863,7 +4046,7 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
     return;
   }
 
-  if (selected == undoLastCommitAction) {
+  if (undoLastCommitAction && selected == undoLastCommitAction) {
     undoLastCommit();
     return;
   }
@@ -3962,13 +4145,14 @@ void MainWindow::showCommitFilesContextMenu(const QPoint &pos) {
     menu.addSeparator();
   auto *blameAction = menu.addAction(tr("&Blame"));
   auto *historyAction = menu.addAction(tr("File &History"));
+  auto *checkoutFileAction = menu.addAction(tr("Checkout this &version"));
   menu.addSeparator();
   const QString fullPath = m_currentPath + QLatin1Char('/') + path;
   auto *openEditorAction = menu.addAction(tr("Open in &External Editor"));
   auto *openFolderAction = menu.addAction(tr("Open Containing &Folder"));
   auto *selected = menu.exec(m_commitFilesTree->mapToGlobal(pos));
 
-  if (selected == externalDiffAction) {
+  if (externalDiffAction && selected == externalDiffAction) {
     launchGitTool({QStringLiteral("difftool"), QStringLiteral("-y"),
                    m_selectedCommitSha + QLatin1Char('^'), m_selectedCommitSha,
                    QStringLiteral("--"), path});
@@ -3978,10 +4162,35 @@ void MainWindow::showCommitFilesContextMenu(const QPoint &pos) {
     showFileHistory(path);
   } else if (selected == openEditorAction) {
     openInExternalEditor(fullPath);
+  } else if (selected == checkoutFileAction) {
+    if (m_gitExecutor->exec(m_currentPath,
+                            {"checkout", m_selectedCommitSha, "--", path})) {
+      loadWorkingTree();
+      statusBar()->showMessage(
+          tr("Checked out %1 from %2").arg(path, m_selectedCommitSha.left(7)));
+    }
   } else if (selected == openFolderAction) {
     QDesktopServices::openUrl(
         QUrl::fromLocalFile(QFileInfo(fullPath).dir().absolutePath()));
   }
+}
+
+void MainWindow::showCommitTableHeaderContextMenu(const QPoint &pos) {
+  if (!m_commitTable)
+    return;
+
+  QMenu menu(this);
+  for (int c = 0; c < m_commitTable->columnCount(); ++c) {
+    QTableWidgetItem *header = m_commitTable->horizontalHeaderItem(c);
+    const QString text = header ? header->text() : QString::number(c);
+    QAction *action = menu.addAction(text);
+    action->setCheckable(true);
+    action->setChecked(!m_commitTable->isColumnHidden(c));
+    connect(action, &QAction::triggered, this, [this, c](bool checked) {
+      m_commitTable->setColumnHidden(c, !checked);
+    });
+  }
+  menu.exec(m_commitTable->horizontalHeader()->viewport()->mapToGlobal(pos));
 }
 
 void MainWindow::showBlame(const QString &path, const QString &revision) {

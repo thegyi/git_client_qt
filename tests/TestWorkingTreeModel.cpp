@@ -29,13 +29,16 @@ void TestWorkingTreeModel::testLoad() {
   QCOMPARE(stagedFiles.at(1).second, QStringLiteral("A"));
 
   const auto &unstagedFiles = model.unstagedFiles();
-  QCOMPARE(unstagedFiles.size(), 3);
+  QCOMPARE(unstagedFiles.size(), 2);
   QCOMPARE(unstagedFiles.at(0).first, QStringLiteral("file1.txt"));
   QCOMPARE(unstagedFiles.at(0).second, QStringLiteral("M"));
   QCOMPARE(unstagedFiles.at(1).first, QStringLiteral("file3.txt"));
   QCOMPARE(unstagedFiles.at(1).second, QStringLiteral("D"));
-  QCOMPARE(unstagedFiles.at(2).first, QStringLiteral("new.txt"));
-  QCOMPARE(unstagedFiles.at(2).second, QStringLiteral("?"));
+
+  const auto &untrackedFiles = model.untrackedFiles();
+  QCOMPARE(untrackedFiles.size(), 1);
+  QCOMPARE(untrackedFiles.at(0).first, QStringLiteral("new.txt"));
+  QCOMPARE(untrackedFiles.at(0).second, QStringLiteral("?"));
 }
 
 void TestWorkingTreeModel::testClear() {

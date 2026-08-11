@@ -59,7 +59,9 @@ private slots:
   void showTagContextMenu(const QPoint &pos);
   void showUnstagedContextMenu(const QPoint &pos);
   void showStagedContextMenu(const QPoint &pos);
+  void showUntrackedContextMenu(const QPoint &pos);
   void showCommitFilesContextMenu(const QPoint &pos);
+  void showCommitTableHeaderContextMenu(const QPoint &pos);
   void showCommitContextMenu(const QPoint &pos);
   void showRemotesContextMenu(const QPoint &pos);
   void showInteractiveRebase(const QString &baseSha);
@@ -188,6 +190,7 @@ private:
   QTimer *m_fsDebounceTimer = nullptr;
   FileTreeWidget *m_unstagedTree = nullptr;
   FileTreeWidget *m_stagedTree = nullptr;
+  FileTreeWidget *m_untrackedTree = nullptr;
   FileTreeWidget *m_commitFilesTree = nullptr;
   DiffViewWidget *m_diffView = nullptr;
   QLineEdit *m_commitSubject = nullptr;
