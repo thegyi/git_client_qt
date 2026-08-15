@@ -97,6 +97,8 @@ private slots:
   void showReflog();
   void showConflictResolver(const QString &operation);
   void showMergeDialog(const QString &branchToMerge = QString());
+  void showArchiveDialog();
+  void showRebaseOntoDialog();
   void startBisect();
   void bisectGood();
   void bisectBad();

@@ -1458,7 +1458,7 @@ void MainWindow::showFileHistory(const QString &path) {
             const QString sha =
                 table->item(item->row(), 0)->data(Qt::UserRole).toString();
             for (int r = 0; r < m_commitTable->rowCount(); ++r) {
-              QTableWidgetItem *shaItem = m_commitTable->item(r, 6);
+              QTableWidgetItem *shaItem = m_commitTable->item(r, 7);
               if (shaItem && shaItem->data(Qt::UserRole).toString() == sha) {
                 m_commitTable->selectRow(r);
                 QTableWidgetItem *msgItem = m_commitTable->item(r, 3);
@@ -1703,6 +1703,186 @@ void MainWindow::showMergeDialog(const QString &branchToMerge) {
       showConflictResolver(QStringLiteral("merge"));
     } else {
       statusBar()->showMessage(output.isEmpty() ? tr("Merge failed") : output,
+                               0);
+    }
+  }
+}
+
+void MainWindow::showArchiveDialog() {
+  if (m_currentPath.isEmpty()) {
+    statusBar()->showMessage(tr("Open a repository first."), 0);
+    return;
+  }
+
+  QDialog dlg(this);
+  dlg.setWindowTitle(tr("Create Archive"));
+  dlg.setMinimumWidth(500);
+  auto *layout = new QFormLayout(&dlg);
+
+  // Tree-ish (branch, tag, or commit)
+  auto *refCombo = new QComboBox(&dlg);
+  refCombo->setEditable(true);
+  QStringList refs;
+  refs += m_gitExecutor->run(m_currentPath,
+                             {"branch", "--format=%(refname:short)"});
+  refs +=
+      m_gitExecutor->run(m_currentPath, {"tag", "--format=%(refname:short)"});
+  refCombo->addItems(refs);
+  refCombo->setCurrentText(QStringLiteral("HEAD"));
+  layout->addRow(tr("Ref / commit:"), refCombo);
+
+  // Format
+  auto *formatCombo = new QComboBox(&dlg);
+  formatCombo->addItem(QStringLiteral("zip"), QStringLiteral("zip"));
+  formatCombo->addItem(QStringLiteral("tar.gz"), QStringLiteral("tar.gz"));
+  formatCombo->addItem(QStringLiteral("tar"), QStringLiteral("tar"));
+  layout->addRow(tr("Format:"), formatCombo);
+
+  // Prefix
+  auto *prefixEdit = new QLineEdit(&dlg);
+  const QString repoName = QDir(m_currentPath).dirName();
+  prefixEdit->setText(repoName + '/');
+  prefixEdit->setPlaceholderText(tr("Optional path prefix inside archive"));
+  layout->addRow(tr("Prefix:"), prefixEdit);
+
+  // Path filter
+  auto *pathEdit = new QLineEdit(&dlg);
+  pathEdit->setPlaceholderText(
+      tr("Leave empty to archive entire tree, or specify a subdirectory"));
+  layout->addRow(tr("Path (optional):"), pathEdit);
+
+  auto *buttons = new QDialogButtonBox(
+      QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+  buttons->button(QDialogButtonBox::Ok)->setText(tr("Export"));
+  layout->addRow(buttons);
+  connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+  if (dlg.exec() != QDialog::Accepted)
+    return;
+
+  const QString ref = refCombo->currentText().trimmed();
+  const QString format = formatCombo->currentData().toString();
+  const QString prefix = prefixEdit->text();
+  const QString pathFilter = pathEdit->text().trimmed();
+
+  if (ref.isEmpty()) {
+    statusBar()->showMessage(tr("No ref specified."), 0);
+    return;
+  }
+
+  const QString defaultName =
+      QStringLiteral("%1-%2.%3")
+          .arg(repoName, ref.left(12).replace('/', '-'), format);
+  const QString outputPath = QFileDialog::getSaveFileName(
+      this, tr("Save Archive"), QDir::homePath() + '/' + defaultName,
+      format == QStringLiteral("zip")      ? tr("Zip files (*.zip)")
+      : format == QStringLiteral("tar.gz") ? tr("Gzip tar files (*.tar.gz)")
+                                           : tr("Tar files (*.tar)"));
+  if (outputPath.isEmpty())
+    return;
+
+  QStringList args = {"archive", "--format=" + format,
+                      "--output=" + outputPath};
+  if (!prefix.isEmpty())
+    args << "--prefix=" + prefix;
+  args << ref;
+  if (!pathFilter.isEmpty())
+    args << pathFilter;
+
+  QString output;
+  if (m_gitExecutor->exec(m_currentPath, args, &output)) {
+    statusBar()->showMessage(tr("Archive saved to %1").arg(outputPath));
+  } else {
+    statusBar()->showMessage(output.isEmpty() ? tr("Archive failed") : output,
+                             0);
+  }
+}
+
+void MainWindow::showRebaseOntoDialog() {
+  if (m_currentPath.isEmpty()) {
+    statusBar()->showMessage(tr("Open a repository first."), 0);
+    return;
+  }
+
+  const QString currentBranch =
+      m_gitExecutor->run(m_currentPath, {"rev-parse", "--abbrev-ref", "HEAD"})
+          .value(0);
+  if (currentBranch.isEmpty()) {
+    statusBar()->showMessage(tr("Could not determine the current branch."), 0);
+    return;
+  }
+
+  QDialog dlg(this);
+  dlg.setWindowTitle(tr("Rebase --onto"));
+  dlg.setMinimumWidth(500);
+  auto *layout = new QFormLayout(&dlg);
+
+  // Description
+  auto *descLabel = new QLabel(
+      tr("Rebases commits from <b>start</b> (exclusive) to <b>end</b> "
+         "(inclusive) onto <b>newbase</b>.<br>"
+         "Equivalent to: <code>git rebase --onto &lt;newbase&gt; "
+         "&lt;start&gt; &lt;end&gt;</code>"),
+      &dlg);
+  descLabel->setWordWrap(true);
+  layout->addRow(descLabel);
+
+  QStringList branches = m_gitExecutor->run(
+      m_currentPath, {"branch", "--format=%(refname:short)"});
+
+  // Newbase
+  auto *newbaseCombo = new QComboBox(&dlg);
+  newbaseCombo->setEditable(true);
+  newbaseCombo->addItems(branches);
+  layout->addRow(tr("New base (--onto):"), newbaseCombo);
+
+  // Start (exclusive ancestor)
+  auto *startCombo = new QComboBox(&dlg);
+  startCombo->setEditable(true);
+  startCombo->addItems(branches);
+  startCombo->setCurrentText(currentBranch);
+  layout->addRow(tr("Start (exclusive):"), startCombo);
+
+  // End (what to rebase)
+  auto *endCombo = new QComboBox(&dlg);
+  endCombo->setEditable(true);
+  endCombo->addItems(branches);
+  endCombo->setCurrentText(currentBranch);
+  layout->addRow(tr("End (inclusive):"), endCombo);
+
+  auto *buttons = new QDialogButtonBox(
+      QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+  buttons->button(QDialogButtonBox::Ok)->setText(tr("Rebase"));
+  layout->addRow(buttons);
+  connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+  if (dlg.exec() != QDialog::Accepted)
+    return;
+
+  const QString newbase = newbaseCombo->currentText().trimmed();
+  const QString start = startCombo->currentText().trimmed();
+  const QString end = endCombo->currentText().trimmed();
+
+  if (newbase.isEmpty() || start.isEmpty() || end.isEmpty()) {
+    statusBar()->showMessage(tr("All fields are required."), 0);
+    return;
+  }
+
+  QString output;
+  if (m_gitExecutor->exec(m_currentPath,
+                          {"rebase", "--onto", newbase, start, end}, &output)) {
+    loadRepository(m_currentPath);
+    statusBar()->showMessage(
+        tr("Rebase --onto %1 %2 %3 completed").arg(newbase, start, end));
+  } else {
+    if (output.contains(QLatin1String("CONFLICT")) ||
+        output.contains(QLatin1String("conflict"))) {
+      loadRepository(m_currentPath);
+      showConflictResolver(QStringLiteral("rebase"));
+    } else {
+      statusBar()->showMessage(output.isEmpty() ? tr("Rebase failed") : output,
                                0);
     }
   }

@@ -329,6 +329,22 @@ MainWindow::MainWindow(QWidget *parent)
   connect(lfsPullAction, &QAction::triggered, this, &MainWindow::lfsPull);
   connect(lfsPushAction, &QAction::triggered, this, &MainWindow::lfsPush);
 
+  repositoryMenu->addSeparator();
+  auto *archiveAction = repositoryMenu->addAction(tr("Create archive..."));
+  archiveAction->setIcon(
+      themedIcon("package-x-generic", QStyle::SP_DriveFDIcon));
+  archiveAction->setStatusTip(tr("Export repository as zip or tar archive"));
+  connect(archiveAction, &QAction::triggered, this,
+          &MainWindow::showArchiveDialog);
+
+  auto *rebaseOntoAction = repositoryMenu->addAction(tr("Rebase --onto..."));
+  rebaseOntoAction->setIcon(
+      themedIcon("view-sort-ascending", QStyle::SP_ArrowUp));
+  rebaseOntoAction->setStatusTip(
+      tr("Rebase a range of commits onto a different base"));
+  connect(rebaseOntoAction, &QAction::triggered, this,
+          &MainWindow::showRebaseOntoDialog);
+
   ui->actionOpen->setShortcut(QKeySequence::Open);
   ui->actionOpen->setStatusTip(tr("Open an existing Git repository"));
   ui->actionClose->setShortcut(QKeySequence::Close);
@@ -1329,7 +1345,7 @@ void MainWindow::applyFonts() {
     m_commandLogEdit->setFont(mono);
   if (m_commitTable) {
     for (int row = 0; row < m_commitTable->rowCount(); ++row) {
-      if (QTableWidgetItem *item = m_commitTable->item(row, 6))
+      if (QTableWidgetItem *item = m_commitTable->item(row, 7))
         item->setFont(mono);
     }
   }
@@ -1722,13 +1738,23 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
   m_commitTable->setRowCount(0);
   m_commitTable->setHorizontalHeaderLabels(
       {tr("Graph"), tr("Date/Time"), tr("Date"), tr("Commit Message"),
-       tr("Author"), tr("Branches"), tr("SHA")});
+       tr("Author"), tr("Author Email"), tr("Branches"), tr("SHA"), tr("Stats"),
+       tr("GPG")});
   m_commitTable->horizontalHeader()->setVisible(true);
   m_commitTable->horizontalHeader()->viewport()->update();
 
   for (int c = 0; c < m_commitTable->columnCount() && c < savedHidden.size();
        ++c)
     m_commitTable->setColumnHidden(c, savedHidden[c]);
+
+  // Hide new columns by default if no saved visibility state
+  const bool hasAnySavedHidden = std::any_of(
+      savedHidden.cbegin(), savedHidden.cend(), [](bool v) { return v; });
+  if (!hasAnySavedHidden && !m_initialRepositoryLoaded) {
+    m_commitTable->setColumnHidden(5, true); // Author Email
+    m_commitTable->setColumnHidden(8, true); // Stats
+    m_commitTable->setColumnHidden(9, true); // GPG
+  }
 
   QMap<QString, int> wipCounts;
   for (const QString &line :
@@ -1795,8 +1821,8 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
               QStringList{"log", "--branches", "--tags", "--remotes", "--graph",
                           "--source", "--date-order",
                           "--date=format:%Y-%m-%d %H:%M:%S",
-                          "--pretty=format:%x1f%H%x1f%h%x1f%an%x1f%ad%x1f%ar%"
-                          "x1f%s%x1f%b%x1f%S%x1f%P%x1e"});
+                          "--pretty=format:%x1f%H%x1f%h%x1f%an%x1f%ae%x1f%ad%"
+                          "x1f%ar%x1f%s%x1f%b%x1f%S%x1f%P%x1f%G?%x1e"});
   if (p.waitForFinished(10000) && p.exitCode() == 0) {
     const QString output =
         QString::fromLocal8Bit(p.readAllStandardOutput().trimmed());
@@ -1975,11 +2001,17 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
         authorItem->setBackground(bgBrush);
       m_commitTable->setItem(row, 4, authorItem);
 
+      auto *emailItem = new QTableWidgetItem(c.authorEmail);
+      emailItem->setToolTip(tip);
+      if (bgBrush != QBrush())
+        emailItem->setBackground(bgBrush);
+      m_commitTable->setItem(row, 5, emailItem);
+
       auto *branchItem = new QTableWidgetItem(branchText);
       branchItem->setToolTip(tip);
       if (bgBrush != QBrush())
         branchItem->setBackground(bgBrush);
-      m_commitTable->setItem(row, 5, branchItem);
+      m_commitTable->setItem(row, 6, branchItem);
 
       auto *shaItem = new QTableWidgetItem(c.shortSha);
       shaItem->setData(Qt::UserRole, c.fullSha);
@@ -1989,7 +2021,84 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
       shaItem->setFont(Theme::monospaceFont());
       if (bgBrush != QBrush())
         shaItem->setBackground(bgBrush);
-      m_commitTable->setItem(row, 6, shaItem);
+      m_commitTable->setItem(row, 7, shaItem);
+
+      auto *statsItem = new QTableWidgetItem();
+      statsItem->setToolTip(tip);
+      if (bgBrush != QBrush())
+        statsItem->setBackground(bgBrush);
+      m_commitTable->setItem(row, 8, statsItem);
+
+      QString gpgText;
+      if (c.gpgStatus == QStringLiteral("G"))
+        gpgText = QStringLiteral("\u2714");
+      else if (c.gpgStatus == QStringLiteral("B"))
+        gpgText = QStringLiteral("\u2718");
+      else if (c.gpgStatus == QStringLiteral("U"))
+        gpgText = QStringLiteral("?");
+      else if (c.gpgStatus == QStringLiteral("E"))
+        gpgText = QStringLiteral("!");
+      auto *gpgItem = new QTableWidgetItem(gpgText);
+      gpgItem->setTextAlignment(Qt::AlignCenter);
+      gpgItem->setToolTip(
+          c.gpgStatus == QStringLiteral("G")   ? tr("Good signature")
+          : c.gpgStatus == QStringLiteral("B") ? tr("Bad signature")
+          : c.gpgStatus == QStringLiteral("U") ? tr("Unknown key")
+          : c.gpgStatus == QStringLiteral("E") ? tr("Expired signature")
+                                               : tr("No signature"));
+      if (bgBrush != QBrush())
+        gpgItem->setBackground(bgBrush);
+      m_commitTable->setItem(row, 9, gpgItem);
+    }
+
+    // Populate stats column (additions/deletions per commit)
+    QHash<QString, QString> statsMap;
+    QProcess statsProc;
+    statsProc.start("git", QStringList{"-C", path, "log", "--branches",
+                                       "--tags", "--remotes", "--date-order",
+                                       "--format=%H", "--shortstat"});
+    if (statsProc.waitForFinished(10000) && statsProc.exitCode() == 0) {
+      const QStringList statsLines =
+          QString::fromLocal8Bit(statsProc.readAllStandardOutput())
+              .split('\n', Qt::SkipEmptyParts);
+      for (int i = 0; i < statsLines.size(); ++i) {
+        const QString &line = statsLines[i];
+        if (line.length() == 40 && !line.contains(QLatin1Char(' '))) {
+          // This is a SHA line; next non-SHA line is the stat
+          if (i + 1 < statsLines.size()) {
+            const QString &statLine = statsLines[i + 1];
+            if (statLine.contains(QLatin1String("insertion")) ||
+                statLine.contains(QLatin1String("deletion"))) {
+              int added = 0, removed = 0;
+              static const QRegularExpression addRx(
+                  QStringLiteral("(\\d+) insertion"));
+              static const QRegularExpression delRx(
+                  QStringLiteral("(\\d+) deletion"));
+              auto am = addRx.match(statLine);
+              if (am.hasMatch())
+                added = am.captured(1).toInt();
+              auto dm = delRx.match(statLine);
+              if (dm.hasMatch())
+                removed = dm.captured(1).toInt();
+              statsMap[line] =
+                  QStringLiteral("+%1 -%2").arg(added).arg(removed);
+              ++i; // skip the stat line
+            }
+          }
+        }
+      }
+    }
+
+    for (int row = 0; row < m_commitTable->rowCount(); ++row) {
+      QTableWidgetItem *shaItem = m_commitTable->item(row, 7);
+      if (!shaItem)
+        continue;
+      const QString sha = shaItem->data(Qt::UserRole).toString();
+      if (statsMap.contains(sha)) {
+        QTableWidgetItem *si = m_commitTable->item(row, 8);
+        if (si)
+          si->setText(statsMap.value(sha));
+      }
     }
   }
   const bool restoredCommitTableWidths =
@@ -2037,7 +2146,7 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
         }
       } else {
         for (int row = 0; row < m_commitTable->rowCount(); ++row) {
-          if (QTableWidgetItem *shaItem = m_commitTable->item(row, 6)) {
+          if (QTableWidgetItem *shaItem = m_commitTable->item(row, 7)) {
             if (shaItem->data(Qt::UserRole).toString() == savedSha) {
               m_commitTable->selectRow(row);
               m_commitTable->scrollToItem(shaItem,
@@ -2176,7 +2285,7 @@ void MainWindow::onBranchClicked(QTreeWidgetItem *item, int column) {
     return;
 
   for (int row = 0; row < m_commitTable->rowCount(); ++row) {
-    QTableWidgetItem *shaItem = m_commitTable->item(row, 6);
+    QTableWidgetItem *shaItem = m_commitTable->item(row, 7);
     if (shaItem && shaItem->data(Qt::UserRole).toString() == sha) {
       m_commitTable->selectRow(row);
       QTableWidgetItem *msgItem = m_commitTable->item(row, 3);
@@ -2204,7 +2313,7 @@ void MainWindow::onTagClicked(QTreeWidgetItem *item, int column) {
   }
 
   for (int row = 0; row < m_commitTable->rowCount(); ++row) {
-    QTableWidgetItem *shaItem = m_commitTable->item(row, 6);
+    QTableWidgetItem *shaItem = m_commitTable->item(row, 7);
     if (shaItem && shaItem->data(Qt::UserRole).toString() == sha) {
       m_commitTable->selectRow(row);
       QTableWidgetItem *msgItem = m_commitTable->item(row, 3);
@@ -2468,7 +2577,7 @@ void MainWindow::updateFileFilter(const QString &text) {
                                 QStringLiteral("--"), pattern});
   const QSet<QString> shaSet = QSet<QString>(shas.cbegin(), shas.cend());
   for (int row = 0; row < m_commitTable->rowCount(); ++row) {
-    QTableWidgetItem *item = m_commitTable->item(row, 6);
+    QTableWidgetItem *item = m_commitTable->item(row, 7);
     const QString sha = item ? item->data(Qt::UserRole).toString() : QString();
     m_commitTable->setRowHidden(row, !shaSet.contains(sha));
   }
@@ -2485,7 +2594,7 @@ void MainWindow::onCommitSelected(QTableWidgetItem *item) {
   m_selectedCommitSha.clear();
 
   const int row = item->row();
-  QTableWidgetItem *shaItem = m_commitTable->item(row, 6);
+  QTableWidgetItem *shaItem = m_commitTable->item(row, 7);
   const QString sha =
       shaItem ? shaItem->data(Qt::UserRole).toString() : QString();
 

@@ -49,3 +49,37 @@ if (MSVC)
 endif()
 
 add_test(NAME TestWorkingTreeModel COMMAND TestWorkingTreeModel)
+
+add_executable(TestCommitModelAdvanced TestCommitModelAdvanced.cpp
+               ${CMAKE_SOURCE_DIR}/src/CommitModel.cpp
+               ${CMAKE_SOURCE_DIR}/src/CommitModel.h
+               ${CMAKE_SOURCE_DIR}/src/LaneGraph.cpp
+               ${CMAKE_SOURCE_DIR}/src/LaneGraph.h
+               ${CMAKE_SOURCE_DIR}/src/Lanes.cpp
+               ${CMAKE_SOURCE_DIR}/src/Lanes.h)
+target_include_directories(TestCommitModelAdvanced PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(TestCommitModelAdvanced PRIVATE
+                      Qt${QT_VERSION_MAJOR}::Core
+                      Qt${QT_VERSION_MAJOR}::Test)
+if (MSVC)
+  target_compile_options(TestCommitModelAdvanced PRIVATE ${MSVC_STDEXT_SHIM})
+endif()
+
+add_test(NAME TestCommitModelAdvanced COMMAND TestCommitModelAdvanced)
+
+add_executable(TestGitOps TestGitOps.cpp
+               ${CMAKE_SOURCE_DIR}/src/GitExecutor.cpp
+               ${CMAKE_SOURCE_DIR}/src/GitExecutor.h
+               ${CMAKE_SOURCE_DIR}/src/GitRepository.cpp
+               ${CMAKE_SOURCE_DIR}/src/GitRepository.h
+               ${CMAKE_SOURCE_DIR}/src/DiffPresenter.cpp
+               ${CMAKE_SOURCE_DIR}/src/DiffPresenter.h)
+target_include_directories(TestGitOps PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(TestGitOps PRIVATE
+                      Qt${QT_VERSION_MAJOR}::Core
+                      Qt${QT_VERSION_MAJOR}::Test)
+if (MSVC)
+  target_compile_options(TestGitOps PRIVATE ${MSVC_STDEXT_SHIM})
+endif()
+
+add_test(NAME TestGitOps COMMAND TestGitOps)

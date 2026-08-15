@@ -71,7 +71,7 @@ void MainWindow::diffWithCommit(const QString &fromSha) {
   QStringList items;
   QStringList shas;
   for (int row = 0; row < m_commitTable->rowCount(); ++row) {
-    QTableWidgetItem *shaItem = m_commitTable->item(row, 6);
+    QTableWidgetItem *shaItem = m_commitTable->item(row, 7);
     if (!shaItem)
       continue;
     const QString sha = shaItem->data(Qt::UserRole).toString();

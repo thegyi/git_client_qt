@@ -93,12 +93,14 @@ void TestGitModels::testCommitModel() {
               QStringLiteral("abc123def456789012345678901234567890abcd\x1f"))
           .append(QStringLiteral("abc1234\x1f"))
           .append(QStringLiteral("Test Author\x1f"))
+          .append(QStringLiteral("test@example.com\x1f"))
           .append(QStringLiteral("2024-01-01 12:00:00\x1f"))
           .append(QStringLiteral("2 hours ago\x1f"))
           .append(QStringLiteral("Add feature\x1f"))
           .append(QStringLiteral("Detailed body\x1f"))
           .append(QStringLiteral("main\x1f"))
-          .append(QStringLiteral("\x1e"));
+          .append(QStringLiteral("\x1f"))
+          .append(QStringLiteral("G\x1e"));
 
   model.loadLog(rawLog);
   QCOMPARE(model.rowCount(), 1);
@@ -109,9 +111,11 @@ void TestGitModels::testCommitModel() {
            QStringLiteral("abc123def456789012345678901234567890abcd"));
   QCOMPARE(c.shortSha, QStringLiteral("abc1234"));
   QCOMPARE(c.author, QStringLiteral("Test Author"));
+  QCOMPARE(c.authorEmail, QStringLiteral("test@example.com"));
   QCOMPARE(c.subject, QStringLiteral("Add feature"));
   QCOMPARE(c.body, QStringLiteral("Detailed body"));
   QCOMPARE(c.branch, QStringLiteral("main"));
+  QCOMPARE(c.gpgStatus, QStringLiteral("G"));
 
   QCOMPARE(model.headerData(0, Qt::Horizontal, Qt::DisplayRole).toString(),
            QStringLiteral("Graph"));

@@ -10,11 +10,13 @@ struct Commit {
   QString fullSha;
   QString shortSha;
   QString author;
+  QString authorEmail;
   QString date;
   QString relative;
   QString subject;
   QString body;
   QString branch;
+  QString gpgStatus;
   QStringList parents;
 };
 

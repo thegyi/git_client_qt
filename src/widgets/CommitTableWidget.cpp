@@ -9,10 +9,11 @@
 #include <QPen>
 
 CommitTableWidget::CommitTableWidget(QWidget *parent) : QTableWidget(parent) {
-  setColumnCount(7);
+  setColumnCount(10);
   setHorizontalHeaderLabels({tr("Graph"), tr("Date/Time"), tr("Date"),
-                             tr("Commit Message"), tr("Author"), tr("Branches"),
-                             tr("SHA")});
+                             tr("Commit Message"), tr("Author"),
+                             tr("Author Email"), tr("Branches"), tr("SHA"),
+                             tr("Stats"), tr("GPG")});
   horizontalHeader()->setVisible(false);
   setSelectionBehavior(QAbstractItemView::SelectRows);
   setSelectionMode(QAbstractItemView::ExtendedSelection);

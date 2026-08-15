@@ -8,7 +8,7 @@ void CommitModel::loadLog(const QString &rawLog) {
 
   for (const QString &record : rawLog.split(QChar(0x1e), Qt::SkipEmptyParts)) {
     const QStringList fields = record.split(QChar(0x1f), Qt::KeepEmptyParts);
-    if (fields.size() < 9)
+    if (fields.size() < 10)
       continue;
 
     Commit c;
@@ -16,15 +16,18 @@ void CommitModel::loadLog(const QString &rawLog) {
     c.fullSha = fields.at(1);
     c.shortSha = fields.at(2);
     c.author = fields.at(3);
-    c.date = fields.at(4);
-    c.relative = fields.at(5);
-    c.subject = fields.at(6);
+    c.authorEmail = fields.at(4);
+    c.date = fields.at(5);
+    c.relative = fields.at(6);
+    c.subject = fields.at(7);
     c.subject.remove(QStringLiteral("[skip ci]"), Qt::CaseInsensitive);
     c.subject = c.subject.trimmed();
-    c.body = fields.at(7).trimmed();
-    c.branch = fields.at(8);
-    if (fields.size() >= 10)
-      c.parents = fields.at(9).split(QChar(' '), Qt::SkipEmptyParts);
+    c.body = fields.at(8).trimmed();
+    c.branch = fields.at(9);
+    if (fields.size() >= 11)
+      c.parents = fields.at(10).split(QChar(' '), Qt::SkipEmptyParts);
+    if (fields.size() >= 12)
+      c.gpgStatus = fields.at(11).trimmed();
     if (c.branch.startsWith(QStringLiteral("refs/heads/")))
       c.branch = c.branch.mid(11);
     else if (c.branch.startsWith(QStringLiteral("refs/remotes/")))

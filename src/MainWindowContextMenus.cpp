@@ -864,7 +864,7 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
   if (selectedRows.size() >= 2) {
     QStringList shas;
     for (int r : selectedRows) {
-      QTableWidgetItem *si = m_commitTable->item(r, 6);
+      QTableWidgetItem *si = m_commitTable->item(r, 7);
       if (si) {
         const QString s = si->data(Qt::UserRole).toString();
         if (!s.isEmpty())
@@ -954,7 +954,7 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
   }
 
   const int row = item->row();
-  QTableWidgetItem *shaItem = m_commitTable->item(row, 6);
+  QTableWidgetItem *shaItem = m_commitTable->item(row, 7);
   if (!shaItem)
     return;
   const QString sha = shaItem->data(Qt::UserRole).toString();
