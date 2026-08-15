@@ -15,7 +15,7 @@ CommitTableWidget::CommitTableWidget(QWidget *parent) : QTableWidget(parent) {
                              tr("SHA")});
   horizontalHeader()->setVisible(false);
   setSelectionBehavior(QAbstractItemView::SelectRows);
-  setSelectionMode(QAbstractItemView::SingleSelection);
+  setSelectionMode(QAbstractItemView::ExtendedSelection);
   setEditTriggers(QAbstractItemView::NoEditTriggers);
   verticalHeader()->setVisible(false);
   horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);

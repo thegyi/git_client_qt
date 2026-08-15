@@ -11,6 +11,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QDockWidget>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
@@ -845,6 +846,112 @@ void MainWindow::showCommitContextMenu(const QPoint &pos) {
   QTableWidgetItem *item = m_commitTable->itemAt(pos);
   if (!item || m_currentPath.isEmpty())
     return;
+
+  // Collect selected commit SHAs (in row order)
+  QList<int> selectedRows;
+  const auto selectedItems = m_commitTable->selectedItems();
+  QSet<int> seenRows;
+  for (const auto *sel : selectedItems) {
+    const int r = sel->row();
+    if (!seenRows.contains(r)) {
+      seenRows.insert(r);
+      selectedRows.append(r);
+    }
+  }
+  std::sort(selectedRows.begin(), selectedRows.end());
+
+  // Multi-select context menu (2+ commits)
+  if (selectedRows.size() >= 2) {
+    QStringList shas;
+    for (int r : selectedRows) {
+      QTableWidgetItem *si = m_commitTable->item(r, 6);
+      if (si) {
+        const QString s = si->data(Qt::UserRole).toString();
+        if (!s.isEmpty())
+          shas.append(s);
+      }
+    }
+    if (shas.size() < 2)
+      return;
+
+    QMenu menu(this);
+    auto *diffRangeAction =
+        menu.addAction(tr("Compare &range (%1 commits)").arg(shas.size()));
+    auto *cherryPickAllAction =
+        menu.addAction(tr("Cherry-&pick %1 commits").arg(shas.size()));
+    menu.addSeparator();
+    auto *copyMenu = menu.addMenu(tr("Copy"));
+    auto *copyShasAction = copyMenu->addAction(tr("All SHAs"));
+
+    QAction *selected = menu.exec(QCursor::pos());
+    if (!selected)
+      return;
+
+    if (selected == diffRangeAction) {
+      // Diff from oldest^ to newest
+      const QString oldest = shas.last();  // bottom of table = oldest
+      const QString newest = shas.first(); // top of table = newest
+      const QStringList diffLines =
+          m_gitExecutor->run(m_currentPath, {"diff", oldest + "^", newest});
+      if (diffLines.isEmpty()) {
+        statusBar()->showMessage(tr("No differences in selected range."));
+      } else {
+        m_currentDiffLines = diffLines;
+        m_currentDiffPath =
+            tr("Range: %1..%2").arg(oldest.left(7), newest.left(7));
+        if (m_viewTabWidget)
+          m_viewTabWidget->setCurrentWidget(m_diffContainer);
+        m_diffView->setHtml(m_diffPresenter->formatDiff(diffLines));
+        if (m_diffDock)
+          m_diffDock->setVisible(true);
+        statusBar()->showMessage(
+            tr("Diff: %1..%2").arg(oldest.left(7), newest.left(7)));
+      }
+      return;
+    }
+
+    if (selected == cherryPickAllAction) {
+      // Cherry-pick in chronological order (oldest first = bottom to top)
+      int successCount = 0;
+      for (int i = shas.size() - 1; i >= 0; --i) {
+        QString output;
+        if (m_gitExecutor->exec(m_currentPath, {"cherry-pick", shas[i]},
+                                &output)) {
+          ++successCount;
+        } else {
+          const QStringList conflicted = m_gitExecutor->run(
+              m_currentPath, {"diff", "--name-only", "--diff-filter=U"});
+          if (!conflicted.isEmpty()) {
+            loadRepository(m_currentPath);
+            statusBar()->showMessage(
+                tr("Cherry-picked %1/%2 commits — conflicts on %3")
+                    .arg(successCount)
+                    .arg(shas.size())
+                    .arg(shas[i].left(7)));
+            showConflictResolver(QStringLiteral("cherry-pick"));
+            return;
+          } else {
+            statusBar()->showMessage(
+                output.isEmpty()
+                    ? tr("Cherry-pick failed at %1").arg(shas[i].left(7))
+                    : output,
+                0);
+            return;
+          }
+        }
+      }
+      loadRepository(m_currentPath);
+      statusBar()->showMessage(
+          tr("Cherry-picked %1 commits successfully").arg(successCount));
+      return;
+    }
+
+    if (selected == copyShasAction) {
+      QApplication::clipboard()->setText(shas.join('\n'));
+      return;
+    }
+    return;
+  }
 
   const int row = item->row();
   QTableWidgetItem *shaItem = m_commitTable->item(row, 6);
