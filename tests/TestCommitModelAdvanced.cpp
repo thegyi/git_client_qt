@@ -35,7 +35,9 @@ void TestCommitModelAdvanced::testEmptyLog() {
 void TestCommitModelAdvanced::testMalformedRecord() {
   CommitModel model;
   // Too few fields — should be skipped
-  const QString badLog = QStringLiteral("*\x1fshortsha\x1fauthor\x1e");
+  const QString badLog = QStringLiteral("*\x1f"
+                                        "shortsha\x1f"
+                                        "author\x1e");
   model.loadLog(badLog);
   QCOMPARE(model.rowCount(), 0);
 }
