@@ -73,6 +73,7 @@ private slots:
   void showInteractiveRebase(const QString &baseSha);
   void cherryPickCommit(const QString &sha);
   void revertCommit(const QString &sha);
+  void resetToCommit(const QString &sha);
   void showSubmodulesContextMenu(const QPoint &pos);
   void onTagClicked(QTreeWidgetItem *item, int column);
   void onFileClicked(QTreeWidgetItem *item, int column);
@@ -95,6 +96,7 @@ private slots:
   void openSubmodule();
   void showReflog();
   void showConflictResolver(const QString &operation);
+  void showMergeDialog(const QString &branchToMerge = QString());
   void startBisect();
   void bisectGood();
   void bisectBad();

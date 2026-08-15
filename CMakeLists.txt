@@ -16,6 +16,10 @@ find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Network Concurren
 set(SOURCES
     src/main.cpp
     src/MainWindow.cpp
+    src/MainWindowContextMenus.cpp
+    src/MainWindowDialogs.cpp
+    src/MainWindowGitOps.cpp
+    src/MainWindowDiff.cpp
     src/Theme.cpp
     src/GitExecutor.cpp
     src/GitRepository.cpp
