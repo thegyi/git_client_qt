@@ -20,12 +20,18 @@ private slots:
   void testExecNonExistentRepo();
   void testRunEmptyResult();
   void testExecMultiLineOutput();
+  void testExecAcceptedExitCode();
+  void testRaw();
+  void testCancel();
 
   // GitRepository
   void testBranches();
   void testStashCreateAndList();
   void testStateSignatureChanges();
   void testInvalidRepo();
+  void testPath();
+  void testRemotes();
+  void testWorktrees();
 
   // DiffPresenter
   void testSideBySideMode();
@@ -96,9 +102,9 @@ void TestGitOps::testExecFailure() {
 
 void TestGitOps::testExecNonExistentRepo() {
   QString output;
-  const bool ok = m_executor->exec(
-      QStringLiteral("/tmp/nonexistent_repo_12345"),
-      {QStringLiteral("status")}, &output);
+  const bool ok =
+      m_executor->exec(QStringLiteral("/tmp/nonexistent_repo_12345"),
+                       {QStringLiteral("status")}, &output);
   QVERIFY(!ok);
 }
 
@@ -124,6 +130,41 @@ void TestGitOps::testExecMultiLineOutput() {
   QVERIFY(log.size() >= 2);
   QCOMPARE(log.first(), QStringLiteral("Second commit"));
   QCOMPARE(log.last(), QStringLiteral("Initial commit"));
+}
+
+void TestGitOps::testExecAcceptedExitCode() {
+  // `git diff --no-index --exit-code` returns 1 when files differ, but
+  // the accepted exit code still makes `run` return the diff output
+  QFile f1(m_repoPath + QStringLiteral("/f1.txt"));
+  QVERIFY(f1.open(QIODevice::WriteOnly | QIODevice::Text));
+  f1.write("a\n");
+  f1.close();
+
+  QFile f2(m_repoPath + QStringLiteral("/f2.txt"));
+  QVERIFY(f2.open(QIODevice::WriteOnly | QIODevice::Text));
+  f2.write("b\n");
+  f2.close();
+
+  const QStringList output =
+      m_executor->run(m_repoPath,
+                      {QStringLiteral("diff"), QStringLiteral("--exit-code"),
+                       QStringLiteral("--no-index"), QStringLiteral("f1.txt"),
+                       QStringLiteral("f2.txt")},
+                      1);
+  QVERIFY(!output.isEmpty());
+}
+
+void TestGitOps::testRaw() {
+  const QByteArray out = m_executor->raw(
+      m_repoPath, {QStringLiteral("log"), QStringLiteral("--format=%s")});
+  QVERIFY(!out.isEmpty());
+  QVERIFY(out.contains("Initial commit"));
+}
+
+void TestGitOps::testCancel() {
+  // Cancelling a not-running process should not crash
+  m_executor->cancel();
+  QVERIFY(true);
 }
 
 // --- GitRepository ---
@@ -191,6 +232,37 @@ void TestGitOps::testInvalidRepo() {
   QVERIFY(repo.root().isEmpty());
 }
 
+void TestGitOps::testPath() {
+  GitRepository repo(m_executor);
+  repo.setPath(m_repoPath);
+  QCOMPARE(repo.path(), m_repoPath);
+}
+
+void TestGitOps::testRemotes() {
+  GitRepository repo(m_executor);
+  repo.setPath(m_repoPath);
+
+  // Add a remote
+  QVERIFY(runGit({QStringLiteral("remote"), QStringLiteral("add"),
+                  QStringLiteral("origin"),
+                  QStringLiteral("https://example.com/repo.git")}));
+
+  const auto remotes = repo.remotes();
+  QCOMPARE(remotes.size(), 1);
+  QCOMPARE(remotes.first().first, QStringLiteral("origin"));
+  QCOMPARE(remotes.first().second,
+           QStringLiteral("https://example.com/repo.git"));
+}
+
+void TestGitOps::testWorktrees() {
+  GitRepository repo(m_executor);
+  repo.setPath(m_repoPath);
+
+  const auto worktrees = repo.worktrees();
+  QVERIFY(!worktrees.isEmpty());
+  QVERIFY(worktrees.first().contains(m_repoPath));
+}
+
 // --- DiffPresenter ---
 
 void TestGitOps::testSideBySideMode() {
@@ -198,15 +270,14 @@ void TestGitOps::testSideBySideMode() {
   presenter.setMode(DiffPresenter::DiffMode::SideBySide);
   QCOMPARE(presenter.mode(), DiffPresenter::DiffMode::SideBySide);
 
-  const QStringList diff = {
-      QStringLiteral("diff --git a/file.txt b/file.txt"),
-      QStringLiteral("index 123..456 100644"),
-      QStringLiteral("--- a/file.txt"),
-      QStringLiteral("+++ b/file.txt"),
-      QStringLiteral("@@ -1,2 +1,2 @@"),
-      QStringLiteral("-old line"),
-      QStringLiteral("+new line"),
-      QStringLiteral(" context")};
+  const QStringList diff = {QStringLiteral("diff --git a/file.txt b/file.txt"),
+                            QStringLiteral("index 123..456 100644"),
+                            QStringLiteral("--- a/file.txt"),
+                            QStringLiteral("+++ b/file.txt"),
+                            QStringLiteral("@@ -1,2 +1,2 @@"),
+                            QStringLiteral("-old line"),
+                            QStringLiteral("+new line"),
+                            QStringLiteral(" context")};
 
   const QString html = presenter.formatDiff(diff);
   QVERIFY(!html.isEmpty());
@@ -219,13 +290,12 @@ void TestGitOps::testUnifiedModeDefault() {
   DiffPresenter presenter;
   QCOMPARE(presenter.mode(), DiffPresenter::DiffMode::Unified);
 
-  const QStringList diff = {
-      QStringLiteral("diff --git a/file.txt b/file.txt"),
-      QStringLiteral("--- a/file.txt"),
-      QStringLiteral("+++ b/file.txt"),
-      QStringLiteral("@@ -1 +1 @@"),
-      QStringLiteral("-removed"),
-      QStringLiteral("+added")};
+  const QStringList diff = {QStringLiteral("diff --git a/file.txt b/file.txt"),
+                            QStringLiteral("--- a/file.txt"),
+                            QStringLiteral("+++ b/file.txt"),
+                            QStringLiteral("@@ -1 +1 @@"),
+                            QStringLiteral("-removed"),
+                            QStringLiteral("+added")};
 
   const QString html = presenter.formatDiff(diff);
   QVERIFY(!html.isEmpty());
@@ -245,13 +315,12 @@ void TestGitOps::testFormatCurrent() {
   // Before any formatDiff call, hasCurrent should be false
   QVERIFY(!presenter.hasCurrent());
 
-  const QStringList diff = {
-      QStringLiteral("diff --git a/f.txt b/f.txt"),
-      QStringLiteral("--- a/f.txt"),
-      QStringLiteral("+++ b/f.txt"),
-      QStringLiteral("@@ -1 +1 @@"),
-      QStringLiteral("-x"),
-      QStringLiteral("+y")};
+  const QStringList diff = {QStringLiteral("diff --git a/f.txt b/f.txt"),
+                            QStringLiteral("--- a/f.txt"),
+                            QStringLiteral("+++ b/f.txt"),
+                            QStringLiteral("@@ -1 +1 @@"),
+                            QStringLiteral("-x"),
+                            QStringLiteral("+y")};
 
   presenter.formatDiff(diff);
   QVERIFY(presenter.hasCurrent());
