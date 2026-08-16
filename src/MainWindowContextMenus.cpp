@@ -380,6 +380,7 @@ void MainWindow::showTagContextMenu(const QPoint &pos) {
           if (execGitWithProgress(
                   m_currentPath, {"push", remote, tagName},
                   tr("Pushing tag %1 to %2...").arg(tagName, remote))) {
+            loadRepository(m_currentPath);
             statusBar()->showMessage(
                 tr("Pushed tag %1 to %2").arg(tagName, remote));
           } else {
