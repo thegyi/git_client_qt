@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 #include "GitExecutor.h"
+#include "GitLabApiClient.h"
 #include "LaneGraph.h"
 #include "Theme.h"
 #include "ui_MainWindow.h"
@@ -21,6 +22,7 @@
 #include <QComboBox>
 #include <QCryptographicHash>
 #include <QCursor>
+#include <QDateTime>
 #include <QDebug>
 #include <QDesktopServices>
 #include <QDialogButtonBox>
@@ -39,6 +41,10 @@
 #include <QHeaderView>
 #include <QImage>
 #include <QInputDialog>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonValue>
 #include <QKeySequence>
 #include <QKeySequenceEdit>
 #include <QLineEdit>
@@ -46,6 +52,7 @@
 #include <QMap>
 #include <QMenu>
 #include <QMessageBox>
+#include <QNetworkReply>
 #include <QPalette>
 #include <QProcess>
 #include <QProcessEnvironment>
@@ -111,6 +118,8 @@ MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent), ui(new Ui::MainWindow) {
   m_gitExecutor = new GitExecutor(this);
   m_gitRepository = new GitRepository(m_gitExecutor, this);
+  m_gitLabClient = new GitLabApiClient(this);
+  m_gitLabClient->loadFromSettings();
   m_diffPresenter = new DiffPresenter(this);
   m_commitModel = new CommitModel(this);
   m_workingTreeModel = new WorkingTreeModel(this);
@@ -474,10 +483,15 @@ MainWindow::MainWindow(QWidget *parent)
   rebase->setStatusTip(tr("Fetch and rebase the current branch"));
   auto *fetchAll = pullMenu->addAction(tr("Fetch all"));
   fetchAll->setStatusTip(tr("Fetch all remotes"));
+  auto *backupAndMerge =
+      pullMenu->addAction(tr("Pull (create backup branch and merge)"));
+  backupAndMerge->setStatusTip(
+      tr("Create a local backup branch, then merge the remote branch"));
   fetchAll->setShortcut(QKeySequence(QLatin1String("Ctrl+Shift+F")));
   auto *actionGroup = new QActionGroup(this);
   actionGroup->setExclusive(true);
-  for (auto *action : {ffIfPossible, ffOnly, rebase, fetchAll}) {
+  for (auto *action :
+       {ffIfPossible, ffOnly, rebase, fetchAll, backupAndMerge}) {
     action->setCheckable(true);
     actionGroup->addAction(action);
   }
@@ -485,6 +499,7 @@ MainWindow::MainWindow(QWidget *parent)
   ffOnly->setData(QStringLiteral("ffOnly"));
   rebase->setData(QStringLiteral("rebase"));
   fetchAll->setData(QStringLiteral("fetchAll"));
+  backupAndMerge->setData(QStringLiteral("backupAndMerge"));
   ffIfPossible->setChecked(true);
   m_pullButton->setMenu(pullMenu);
 
@@ -613,6 +628,20 @@ MainWindow::MainWindow(QWidget *parent)
       } else {
         pullArgs << remote;
       }
+
+      if (m_backupAndMergePull) {
+        const QString timestampFormat = "yyyyMMdd-hhmmss";
+        const QString backupName =
+            currentBranch + "-backup-" +
+            QDateTime::currentDateTime().toString(timestampFormat);
+        if (!m_gitExecutor->exec(m_currentPath, {"branch", backupName})) {
+          statusBar()->showMessage(
+              tr("Failed to create backup branch '%1'").arg(backupName), 0);
+          return;
+        }
+        statusBar()->showMessage(
+            tr("Created backup branch '%1'").arg(backupName), 0);
+      }
     }
 
     p.start(QStringLiteral("git"), pullArgs);
@@ -644,21 +673,31 @@ MainWindow::MainWindow(QWidget *parent)
   connect(ffIfPossible, &QAction::triggered, this, [this] {
     m_pullArgs.clear();
     m_pullArgs << "pull";
+    m_backupAndMergePull = false;
     savePullMode();
   });
   connect(ffOnly, &QAction::triggered, this, [this] {
     m_pullArgs.clear();
     m_pullArgs << "pull" << "--ff-only";
+    m_backupAndMergePull = false;
     savePullMode();
   });
   connect(rebase, &QAction::triggered, this, [this] {
     m_pullArgs.clear();
     m_pullArgs << "pull" << "--rebase";
+    m_backupAndMergePull = false;
+    savePullMode();
+  });
+  connect(backupAndMerge, &QAction::triggered, this, [this] {
+    m_pullArgs.clear();
+    m_pullArgs << "pull";
+    m_backupAndMergePull = true;
     savePullMode();
   });
   connect(fetchAll, &QAction::triggered, this, [this] {
     m_pullArgs.clear();
     m_pullArgs << "fetch" << "--all";
+    m_backupAndMergePull = false;
     savePullMode();
   });
 
@@ -1077,6 +1116,113 @@ MainWindow::MainWindow(QWidget *parent)
   m_commandLogDock->setVisible(false);
   addDockWidget(Qt::BottomDockWidgetArea, m_commandLogDock);
 
+  m_gitLabDock = new QDockWidget(tr("GitLab"), this);
+  m_gitLabDock->setObjectName(QStringLiteral("gitLabDock"));
+  auto *gitLabWidget = new QWidget(this);
+  auto *gitLabLayout = new QVBoxLayout(gitLabWidget);
+  gitLabLayout->setContentsMargins(4, 4, 4, 4);
+  gitLabLayout->setSpacing(4);
+
+  m_gitLabStatusLabel = new QLabel(tr("Configure GitLab in Preferences"), this);
+  m_gitLabStatusLabel->setWordWrap(true);
+  gitLabLayout->addWidget(m_gitLabStatusLabel);
+
+  auto *gitLabTabs = new QTabWidget(this);
+  m_gitLabTabWidget = gitLabTabs;
+
+  auto *mrTab = new QWidget(this);
+  auto *mrLayout = new QVBoxLayout(mrTab);
+  m_gitLabMRTree = new QTreeWidget(this);
+  m_gitLabMRTree->setColumnCount(4);
+  m_gitLabMRTree->setHeaderLabels(
+      {tr("MR"), tr("Author"), tr("Source"), tr("Target")});
+  m_gitLabMRTree->setRootIsDecorated(false);
+  m_gitLabMRTree->setAlternatingRowColors(true);
+  mrLayout->addWidget(m_gitLabMRTree);
+  m_gitLabRefreshMRsButton =
+      new QPushButton(tr("Refresh merge requests"), this);
+  connect(m_gitLabRefreshMRsButton, &QPushButton::clicked, this,
+          &MainWindow::refreshGitLabMergeRequests);
+  mrLayout->addWidget(m_gitLabRefreshMRsButton);
+  gitLabTabs->addTab(mrTab, tr("Merge requests"));
+
+  auto *pipelineTab = new QWidget(this);
+  auto *pipelineLayout = new QVBoxLayout(pipelineTab);
+  m_gitLabPipelineTree = new QTreeWidget(this);
+  m_gitLabPipelineTree->setColumnCount(4);
+  m_gitLabPipelineTree->setHeaderLabels(
+      {tr("Pipeline"), tr("Status"), tr("Ref"), tr("SHA")});
+  m_gitLabPipelineTree->setRootIsDecorated(false);
+  m_gitLabPipelineTree->setAlternatingRowColors(true);
+  pipelineLayout->addWidget(m_gitLabPipelineTree);
+  m_gitLabJobTree = new QTreeWidget(this);
+  m_gitLabJobTree->setColumnCount(2);
+  m_gitLabJobTree->setHeaderLabels({tr("Job"), tr("Status")});
+  m_gitLabJobTree->setRootIsDecorated(false);
+  m_gitLabJobTree->setAlternatingRowColors(true);
+  m_gitLabJobTree->setMaximumHeight(120);
+  pipelineLayout->addWidget(m_gitLabJobTree);
+  m_gitLabJobLog = new QTextEdit(this);
+  m_gitLabJobLog->setReadOnly(true);
+  m_gitLabJobLog->setFont(Theme::monospaceFont());
+  m_gitLabJobLog->setPlaceholderText(tr("Select a job to view its trace"));
+  pipelineLayout->addWidget(m_gitLabJobLog);
+  m_gitLabRefreshPipelinesButton =
+      new QPushButton(tr("Refresh pipelines"), this);
+  connect(m_gitLabRefreshPipelinesButton, &QPushButton::clicked, this,
+          &MainWindow::refreshGitLabPipelines);
+  pipelineLayout->addWidget(m_gitLabRefreshPipelinesButton);
+
+  m_gitLabDownloadArtifactsButton =
+      new QPushButton(tr("Download artifacts"), this);
+  m_gitLabDownloadArtifactsButton->setEnabled(false);
+  connect(m_gitLabDownloadArtifactsButton, &QPushButton::clicked, this,
+          &MainWindow::downloadGitLabJobArtifacts);
+  pipelineLayout->addWidget(m_gitLabDownloadArtifactsButton);
+
+  gitLabTabs->addTab(pipelineTab, tr("Pipelines"));
+  gitLabLayout->addWidget(gitLabTabs);
+
+  connect(m_gitLabPipelineTree, &QTreeWidget::itemClicked, this,
+          [this](QTreeWidgetItem *item, int) {
+            if (!item || !m_gitLabClient)
+              return;
+            const int pipelineId = item->data(0, Qt::UserRole).toInt();
+            QNetworkReply *reply = m_gitLabClient->getPipelineJobs(pipelineId);
+            if (reply) {
+              m_gitLabJobLog->clear();
+              connect(reply, &QNetworkReply::finished, this,
+                      [this, reply]() { onGitLabPipelineJobsFinished(reply); });
+            }
+          });
+
+  connect(m_gitLabJobTree, &QTreeWidget::itemClicked, this,
+          [this](QTreeWidgetItem *item, int) {
+            if (!item || !m_gitLabClient)
+              return;
+            const int jobId = item->data(0, Qt::UserRole).toInt();
+            QNetworkReply *reply = m_gitLabClient->getJobTrace(jobId);
+            if (reply) {
+              m_gitLabJobLog->clear();
+              connect(reply, &QNetworkReply::finished, this,
+                      [this, reply]() { onGitLabJobTraceFinished(reply); });
+            }
+          });
+  connect(m_gitLabJobTree, &QTreeWidget::currentItemChanged, this,
+          [this](QTreeWidgetItem *current, QTreeWidgetItem *) {
+            if (!m_gitLabDownloadArtifactsButton)
+              return;
+            m_gitLabDownloadArtifactsButton->setEnabled(
+                current && current->data(0, Qt::UserRole + 1).toBool());
+          });
+
+  m_gitLabDock->setWidget(gitLabWidget);
+  m_gitLabDock->setFeatures(QDockWidget::DockWidgetMovable |
+                            QDockWidget::DockWidgetFloatable |
+                            QDockWidget::DockWidgetClosable);
+  m_gitLabDock->setVisible(false);
+  addDockWidget(Qt::RightDockWidgetArea, m_gitLabDock);
+
   connect(m_gitExecutor, &GitExecutor::commandLogged, this,
           [this](const QString &command, const QString &output, int exitCode) {
             if (!m_commandLogEdit)
@@ -1126,6 +1272,16 @@ MainWindow::MainWindow(QWidget *parent)
   addVisibilityAction(tr("Working tree"), m_workTreeDock);
   addVisibilityAction(tr("Grep"), m_grepDock);
   addVisibilityAction(tr("Command log"), m_commandLogDock);
+  addVisibilityAction(tr("GitLab"), m_gitLabDock);
+
+  auto *gitlabMenu = new QMenu(tr("&GitLab"), this);
+  menuBar()->insertMenu(viewMenu->menuAction(), gitlabMenu);
+  auto *refreshMRsAction = gitlabMenu->addAction(tr("Refresh merge requests"));
+  connect(refreshMRsAction, &QAction::triggered, this,
+          &MainWindow::refreshGitLabMergeRequests);
+  auto *refreshPipelinesAction = gitlabMenu->addAction(tr("Refresh pipelines"));
+  connect(refreshPipelinesAction, &QAction::triggered, this,
+          &MainWindow::refreshGitLabPipelines);
 
   connect(ui->actionOpen, &QAction::triggered, this, [this] {
     const QString path =
@@ -1233,12 +1389,19 @@ void MainWindow::restoreSettings() {
   if (pullMode == QLatin1String("ffOnly")) {
     m_pullArgs.clear();
     m_pullArgs << "pull" << "--ff-only";
+    m_backupAndMergePull = false;
   } else if (pullMode == QLatin1String("rebase")) {
     m_pullArgs.clear();
     m_pullArgs << "pull" << "--rebase";
+    m_backupAndMergePull = false;
+  } else if (pullMode == QLatin1String("backupAndMerge")) {
+    m_pullArgs.clear();
+    m_pullArgs << "pull";
+    m_backupAndMergePull = true;
   } else {
     m_pullArgs.clear();
     m_pullArgs << "pull";
+    m_backupAndMergePull = false;
   }
 
   for (QAction *action : findChildren<QAction *>()) {
@@ -1261,13 +1424,292 @@ void MainWindow::restoreSettings() {
 void MainWindow::savePullMode() {
   QSettings settings("GitClientQt", "GitClientQt");
   QString mode = QStringLiteral("ffIfPossible");
-  if (m_pullArgs.first() == QLatin1String("fetch"))
+  if (m_backupAndMergePull)
+    mode = QStringLiteral("backupAndMerge");
+  else if (m_pullArgs.first() == QLatin1String("fetch"))
     mode = QStringLiteral("fetchAll");
   else if (m_pullArgs.contains(QLatin1String("--rebase")))
     mode = QStringLiteral("rebase");
   else if (m_pullArgs.contains(QLatin1String("--ff-only")))
     mode = QStringLiteral("ffOnly");
   settings.setValue("pullMode", mode);
+}
+
+void MainWindow::refreshGitLabMergeRequests() {
+  if (!m_gitLabClient || m_currentPath.isEmpty()) {
+    statusBar()->showMessage(tr("Open a repository first."), 0);
+    return;
+  }
+
+  if (m_gitLabClient->projectId().isEmpty()) {
+    const QString remoteUrl =
+        m_gitExecutor
+            ->run(m_currentPath,
+                  {QStringLiteral("config"), QStringLiteral("--get"),
+                   QStringLiteral("remote.origin.url")})
+            .value(0);
+    if (remoteUrl.isEmpty()) {
+      statusBar()->showMessage(
+          tr("No GitLab project configured and no origin remote found."), 0);
+      return;
+    }
+    m_gitLabClient->setProjectId(
+        GitLabApiClient::projectIdFromRemoteUrl(remoteUrl));
+  }
+
+  if (m_gitLabClient->token().isEmpty()) {
+    statusBar()->showMessage(
+        tr("GitLab access token not configured. Set it in Preferences."), 0);
+    return;
+  }
+
+  if (m_gitLabMRTree)
+    m_gitLabMRTree->clear();
+  if (m_gitLabStatusLabel)
+    m_gitLabStatusLabel->setText(tr("Loading merge requests..."));
+  if (m_gitLabDock)
+    m_gitLabDock->setVisible(true);
+
+  QNetworkReply *reply = m_gitLabClient->getMergeRequests();
+  if (reply) {
+    connect(reply, &QNetworkReply::finished, this,
+            [this, reply]() { onGitLabMergeRequestsFinished(reply); });
+  } else if (m_gitLabStatusLabel) {
+    m_gitLabStatusLabel->setText(tr("Failed to start GitLab request."));
+  }
+}
+
+void MainWindow::onGitLabMergeRequestsFinished(QNetworkReply *reply) {
+  if (!reply)
+    return;
+  if (reply->error() != QNetworkReply::NoError) {
+    if (m_gitLabStatusLabel)
+      m_gitLabStatusLabel->setText(
+          tr("GitLab request failed: %1").arg(reply->errorString()));
+    reply->deleteLater();
+    return;
+  }
+
+  const QByteArray data = reply->readAll();
+  const QJsonDocument doc = QJsonDocument::fromJson(data);
+  const QJsonArray mrs = doc.array();
+
+  if (m_gitLabMRTree)
+    m_gitLabMRTree->clear();
+  for (const QJsonValue &v : mrs) {
+    const QJsonObject mr = v.toObject();
+    auto *item = new QTreeWidgetItem(m_gitLabMRTree);
+    item->setText(0, mr.value(QStringLiteral("title")).toString());
+    item->setText(
+        1,
+        mr.value(QStringLiteral("author")).toObject().value("name").toString());
+    item->setText(2, mr.value(QStringLiteral("source_branch")).toString());
+    item->setText(3, mr.value(QStringLiteral("target_branch")).toString());
+    item->setData(0, Qt::UserRole,
+                  mr.value(QStringLiteral("web_url")).toString());
+  }
+
+  if (m_gitLabStatusLabel)
+    m_gitLabStatusLabel->setText(
+        tr("%1 merge request(s) loaded.").arg(mrs.size()));
+
+  reply->deleteLater();
+}
+
+void MainWindow::refreshGitLabPipelines() {
+  if (!m_gitLabClient || m_currentPath.isEmpty()) {
+    statusBar()->showMessage(tr("Open a repository first."), 0);
+    return;
+  }
+
+  if (m_gitLabClient->projectId().isEmpty()) {
+    const QString remoteUrl =
+        m_gitExecutor
+            ->run(m_currentPath,
+                  {QStringLiteral("config"), QStringLiteral("--get"),
+                   QStringLiteral("remote.origin.url")})
+            .value(0);
+    if (remoteUrl.isEmpty()) {
+      statusBar()->showMessage(
+          tr("No GitLab project configured and no origin remote found."), 0);
+      return;
+    }
+    m_gitLabClient->setProjectId(
+        GitLabApiClient::projectIdFromRemoteUrl(remoteUrl));
+  }
+
+  if (m_gitLabClient->token().isEmpty()) {
+    statusBar()->showMessage(
+        tr("GitLab access token not configured. Set it in Preferences."), 0);
+    return;
+  }
+
+  const QString ref = currentBranchName();
+  if (m_gitLabPipelineTree)
+    m_gitLabPipelineTree->clear();
+  if (m_gitLabJobTree)
+    m_gitLabJobTree->clear();
+  if (m_gitLabJobLog)
+    m_gitLabJobLog->clear();
+  if (m_gitLabStatusLabel)
+    m_gitLabStatusLabel->setText(tr("Loading pipelines..."));
+  if (m_gitLabDock)
+    m_gitLabDock->setVisible(true);
+
+  QNetworkReply *reply = m_gitLabClient->getPipelines(ref);
+  if (reply) {
+    connect(reply, &QNetworkReply::finished, this,
+            [this, reply]() { onGitLabPipelinesFinished(reply); });
+  } else if (m_gitLabStatusLabel) {
+    m_gitLabStatusLabel->setText(tr("Failed to start GitLab request."));
+  }
+}
+
+void MainWindow::onGitLabPipelinesFinished(QNetworkReply *reply) {
+  if (!reply)
+    return;
+  if (reply->error() != QNetworkReply::NoError) {
+    if (m_gitLabStatusLabel)
+      m_gitLabStatusLabel->setText(
+          tr("GitLab request failed: %1").arg(reply->errorString()));
+    reply->deleteLater();
+    return;
+  }
+
+  const QByteArray data = reply->readAll();
+  const QJsonDocument doc = QJsonDocument::fromJson(data);
+  const QJsonArray pipelines = doc.array();
+
+  if (m_gitLabPipelineTree)
+    m_gitLabPipelineTree->clear();
+  for (const QJsonValue &v : pipelines) {
+    const QJsonObject pipeline = v.toObject();
+    auto *item = new QTreeWidgetItem(m_gitLabPipelineTree);
+    item->setText(
+        0, QString::number(pipeline.value(QStringLiteral("id")).toInt()));
+    item->setText(1, pipeline.value(QStringLiteral("status")).toString());
+    item->setText(2, pipeline.value(QStringLiteral("ref")).toString());
+    item->setText(3, pipeline.value(QStringLiteral("sha")).toString().left(8));
+    item->setData(0, Qt::UserRole,
+                  pipeline.value(QStringLiteral("id")).toInt());
+  }
+
+  if (m_gitLabStatusLabel)
+    m_gitLabStatusLabel->setText(
+        tr("%1 pipeline(s) loaded.").arg(pipelines.size()));
+
+  reply->deleteLater();
+}
+
+void MainWindow::onGitLabPipelineJobsFinished(QNetworkReply *reply) {
+  if (!reply)
+    return;
+  if (reply->error() != QNetworkReply::NoError) {
+    if (m_gitLabStatusLabel)
+      m_gitLabStatusLabel->setText(
+          tr("GitLab request failed: %1").arg(reply->errorString()));
+    reply->deleteLater();
+    return;
+  }
+
+  const QByteArray data = reply->readAll();
+  const QJsonDocument doc = QJsonDocument::fromJson(data);
+  const QJsonArray jobs = doc.array();
+
+  if (m_gitLabJobTree)
+    m_gitLabJobTree->clear();
+  for (const QJsonValue &v : jobs) {
+    const QJsonObject job = v.toObject();
+    auto *item = new QTreeWidgetItem(m_gitLabJobTree);
+    item->setText(0, job.value(QStringLiteral("name")).toString());
+    item->setText(1, job.value(QStringLiteral("status")).toString());
+    item->setData(0, Qt::UserRole, job.value(QStringLiteral("id")).toInt());
+    item->setData(0, Qt::UserRole + 1,
+                  !job.value(QStringLiteral("artifacts")).toArray().isEmpty());
+  }
+
+  if (m_gitLabStatusLabel && m_gitLabJobTree)
+    m_gitLabStatusLabel->setText(
+        tr("%1 job(s) for selected pipeline.").arg(jobs.size()));
+
+  reply->deleteLater();
+}
+
+void MainWindow::onGitLabJobTraceFinished(QNetworkReply *reply) {
+  if (!reply)
+    return;
+  if (reply->error() != QNetworkReply::NoError) {
+    if (m_gitLabStatusLabel)
+      m_gitLabStatusLabel->setText(
+          tr("GitLab request failed: %1").arg(reply->errorString()));
+    if (m_gitLabJobLog)
+      m_gitLabJobLog->clear();
+    reply->deleteLater();
+    return;
+  }
+
+  const QByteArray data = reply->readAll();
+  if (m_gitLabJobLog)
+    m_gitLabJobLog->setPlainText(QString::fromUtf8(data));
+  if (m_gitLabStatusLabel)
+    m_gitLabStatusLabel->setText(tr("Job trace loaded."));
+
+  reply->deleteLater();
+}
+
+void MainWindow::downloadGitLabJobArtifacts() {
+  if (!m_gitLabClient || !m_gitLabJobTree)
+    return;
+  QTreeWidgetItem *item = m_gitLabJobTree->currentItem();
+  if (!item)
+    return;
+  const int jobId = item->data(0, Qt::UserRole).toInt();
+  const bool hasArtifacts = item->data(0, Qt::UserRole + 1).toBool();
+  if (!hasArtifacts || jobId <= 0) {
+    statusBar()->showMessage(tr("Selected job has no artifacts."), 0);
+    return;
+  }
+  QNetworkReply *reply = m_gitLabClient->getJobArtifacts(jobId);
+  if (reply) {
+    if (m_gitLabStatusLabel)
+      m_gitLabStatusLabel->setText(tr("Downloading artifacts..."));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, jobId]() {
+      onGitLabJobArtifactsFinished(reply, jobId);
+    });
+  } else if (m_gitLabStatusLabel) {
+    m_gitLabStatusLabel->setText(tr("Failed to start artifact download."));
+  }
+}
+
+void MainWindow::onGitLabJobArtifactsFinished(QNetworkReply *reply, int jobId) {
+  if (!reply)
+    return;
+  if (reply->error() != QNetworkReply::NoError) {
+    if (m_gitLabStatusLabel)
+      m_gitLabStatusLabel->setText(
+          tr("Artifact download failed: %1").arg(reply->errorString()));
+    if (m_gitLabJobLog)
+      m_gitLabJobLog->clear();
+    reply->deleteLater();
+    return;
+  }
+
+  const QByteArray data = reply->readAll();
+  const QString defaultName = QStringLiteral("job_%1_artifacts.zip").arg(jobId);
+  const QString path = QFileDialog::getSaveFileName(
+      this, tr("Save artifacts"), defaultName, tr("Zip files (*.zip)"));
+  if (!path.isEmpty()) {
+    QFile file(path);
+    if (file.open(QIODevice::WriteOnly)) {
+      file.write(data);
+      file.close();
+      if (m_gitLabStatusLabel)
+        m_gitLabStatusLabel->setText(tr("Artifacts saved to %1.").arg(path));
+    } else if (m_gitLabStatusLabel) {
+      m_gitLabStatusLabel->setText(tr("Failed to save artifacts."));
+    }
+  }
+  reply->deleteLater();
 }
 
 QString MainWindow::currentBranchName() const {
@@ -1556,6 +1998,19 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
   }
   m_currentPath = repoRoot;
   m_gitRepository->setPath(m_currentPath);
+
+  if (m_gitLabClient) {
+    const QString remoteUrl =
+        m_gitExecutor
+            ->run(m_currentPath,
+                  {QStringLiteral("config"), QStringLiteral("--get"),
+                   QStringLiteral("remote.origin.url")})
+            .value(0);
+    if (!remoteUrl.isEmpty())
+      m_gitLabClient->setProjectId(
+          GitLabApiClient::projectIdFromRemoteUrl(remoteUrl));
+  }
+
   if (updateTab)
     activateRepositoryTab(m_currentPath);
   if (m_centralStack)
@@ -2838,6 +3293,13 @@ void MainWindow::onRepositoryTabChanged(int index) {
     m_repoHorizontalScroll[m_currentPath] =
         m_commitTable->horizontalScrollBar()->value();
   loadRepository(path, false);
+
+  if (m_gitLabDock && m_gitLabDock->isVisible() && m_gitLabTabWidget) {
+    if (m_gitLabTabWidget->currentIndex() == 0)
+      refreshGitLabMergeRequests();
+    else if (m_gitLabTabWidget->currentIndex() == 1)
+      refreshGitLabPipelines();
+  }
 }
 
 void MainWindow::onRepositoryTabCloseRequested(int index) {

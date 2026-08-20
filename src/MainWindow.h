@@ -39,10 +39,12 @@ class QTabBar;
 class QTabWidget;
 class QSplitter;
 class QNetworkAccessManager;
+class QNetworkReply;
 class SpellCheckHighlighter;
 class QProcess;
 class QProgressBar;
 class QProgressDialog;
+class GitLabApiClient;
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -169,6 +171,14 @@ private:
   void onCommitFileClicked(QTreeWidgetItem *item, int column);
   void onStashClicked(QTreeWidgetItem *item, int column);
   void onBranchClicked(QTreeWidgetItem *item, int column);
+  void refreshGitLabMergeRequests();
+  void onGitLabMergeRequestsFinished(QNetworkReply *reply);
+  void refreshGitLabPipelines();
+  void onGitLabPipelinesFinished(QNetworkReply *reply);
+  void onGitLabPipelineJobsFinished(QNetworkReply *reply);
+  void onGitLabJobTraceFinished(QNetworkReply *reply);
+  void downloadGitLabJobArtifacts();
+  void onGitLabJobArtifactsFinished(QNetworkReply *reply, int jobId);
 
   Ui::MainWindow *ui;
   GitExecutor *m_gitExecutor = nullptr;
@@ -226,6 +236,7 @@ private:
   QMenu *m_recentMenu = nullptr;
   QStringList m_pullArgs;
   QStringList m_pushArgs;
+  bool m_backupAndMergePull = false;
   QLineEdit *m_filterEdit = nullptr;
   QDockWidget *m_repoDock = nullptr;
   QDockWidget *m_workTreeDock = nullptr;
@@ -248,6 +259,17 @@ private:
   QMap<QString, QString> m_repoUnstagedFile;
   QMap<QString, QString> m_repoStagedFile;
   QMap<QString, QString> m_repoCommitFile;
+  GitLabApiClient *m_gitLabClient = nullptr;
+  QDockWidget *m_gitLabDock = nullptr;
+  QTabWidget *m_gitLabTabWidget = nullptr;
+  QTreeWidget *m_gitLabMRTree = nullptr;
+  QPushButton *m_gitLabRefreshMRsButton = nullptr;
+  QPushButton *m_gitLabRefreshPipelinesButton = nullptr;
+  QPushButton *m_gitLabDownloadArtifactsButton = nullptr;
+  QLabel *m_gitLabStatusLabel = nullptr;
+  QTreeWidget *m_gitLabPipelineTree = nullptr;
+  QTreeWidget *m_gitLabJobTree = nullptr;
+  QTextEdit *m_gitLabJobLog = nullptr;
 };
 
 #endif // MAINWINDOW_H

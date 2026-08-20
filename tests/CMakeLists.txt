@@ -83,3 +83,17 @@ if (MSVC)
 endif()
 
 add_test(NAME TestGitOps COMMAND TestGitOps)
+
+add_executable(TestGitLabApiClient TestGitLabApiClient.cpp
+               ${CMAKE_SOURCE_DIR}/src/GitLabApiClient.cpp
+               ${CMAKE_SOURCE_DIR}/src/GitLabApiClient.h)
+target_include_directories(TestGitLabApiClient PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(TestGitLabApiClient PRIVATE
+                      Qt${QT_VERSION_MAJOR}::Core
+                      Qt${QT_VERSION_MAJOR}::Network
+                      Qt${QT_VERSION_MAJOR}::Test)
+if (MSVC)
+  target_compile_options(TestGitLabApiClient PRIVATE ${MSVC_STDEXT_SHIM})
+endif()
+
+add_test(NAME TestGitLabApiClient COMMAND TestGitLabApiClient)

@@ -78,6 +78,8 @@ void MainWindow::showPreferences() {
                          QStringLiteral("ffOnly"));
   pullModeCombo->addItem(tr("Pull (rebase)"), QStringLiteral("rebase"));
   pullModeCombo->addItem(tr("Fetch all"), QStringLiteral("fetchAll"));
+  pullModeCombo->addItem(tr("Pull (create backup branch and merge)"),
+                         QStringLiteral("backupAndMerge"));
   pullModeCombo->setCurrentIndex(pullModeCombo->findData(
       settings.value("pullMode", QStringLiteral("ffIfPossible"))));
 
@@ -128,6 +130,24 @@ void MainWindow::showPreferences() {
   toolsLayout->addRow(tr("Diff tool:"), diffToolEdit);
   toolsLayout->addRow(tr("Merge tool:"), mergeToolEdit);
   tabs->addTab(toolsTab, tr("External Tools"));
+
+  auto *gitlabTab = new QWidget(&dlg);
+  auto *gitlabLayout = new QFormLayout(gitlabTab);
+
+  auto *gitlabUrlEdit = new QLineEdit(&dlg);
+  gitlabUrlEdit->setPlaceholderText(tr("https://gitlab.com"));
+  gitlabUrlEdit->setText(settings
+                             .value(QStringLiteral("gitlab/baseUrl"),
+                                    QStringLiteral("https://gitlab.com"))
+                             .toString());
+  auto *gitlabTokenEdit = new QLineEdit(&dlg);
+  gitlabTokenEdit->setEchoMode(QLineEdit::Password);
+  gitlabTokenEdit->setText(
+      settings.value(QStringLiteral("gitlab/token")).toString());
+
+  gitlabLayout->addRow(tr("GitLab URL:"), gitlabUrlEdit);
+  gitlabLayout->addRow(tr("Access token:"), gitlabTokenEdit);
+  tabs->addTab(gitlabTab, tr("GitLab"));
 
   auto *themeTab = new QWidget(&dlg);
   auto *themeLayout = new QVBoxLayout(themeTab);
@@ -423,6 +443,11 @@ void MainWindow::showPreferences() {
   settings.setValue(QStringLiteral("external/mergeTool"),
                     mergeToolEdit->text().trimmed());
 
+  settings.setValue(QStringLiteral("gitlab/baseUrl"),
+                    gitlabUrlEdit->text().trimmed());
+  settings.setValue(QStringLiteral("gitlab/token"),
+                    gitlabTokenEdit->text().trimmed());
+
   QStringList protectedBranches;
   for (const QString &part :
        protectedBranchesEdit->text().split(QLatin1Char(','))) {
@@ -455,15 +480,23 @@ void MainWindow::showPreferences() {
   if (pullMode == QLatin1String("ffOnly")) {
     m_pullArgs.clear();
     m_pullArgs << "pull" << "--ff-only";
+    m_backupAndMergePull = false;
   } else if (pullMode == QLatin1String("rebase")) {
     m_pullArgs.clear();
     m_pullArgs << "pull" << "--rebase";
+    m_backupAndMergePull = false;
   } else if (pullMode == QLatin1String("fetchAll")) {
     m_pullArgs.clear();
     m_pullArgs << "fetch" << "--all";
+    m_backupAndMergePull = false;
+  } else if (pullMode == QLatin1String("backupAndMerge")) {
+    m_pullArgs.clear();
+    m_pullArgs << "pull";
+    m_backupAndMergePull = true;
   } else {
     m_pullArgs.clear();
     m_pullArgs << "pull";
+    m_backupAndMergePull = false;
   }
 
   updateRecentRepos();

@@ -23,6 +23,7 @@ set(SOURCES
     src/Theme.cpp
     src/GitExecutor.cpp
     src/GitRepository.cpp
+    src/GitLabApiClient.cpp
     src/DiffPresenter.cpp
     src/CommitModel.cpp
     src/LaneGraph.cpp
@@ -39,6 +40,7 @@ set(HEADERS
     src/MainWindow.h
     src/Theme.h
     src/GitExecutor.h
+    src/GitLabApiClient.h
     src/GitRepository.h
     src/DiffPresenter.h
     src/CommitModel.h
