@@ -40,6 +40,8 @@ FileTreeWidget::FileTreeWidget(const QString &headerLabel, QWidget *parent)
   setAcceptDrops(true);
   setDragDropMode(QAbstractItemView::DragDrop);
   setDefaultDropAction(Qt::MoveAction);
+  header()->hide();
+  setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 }
 
 QString FileTreeWidget::itemPath(QTreeWidgetItem *item) const {
@@ -127,9 +129,9 @@ QIcon FileTreeWidget::statusIcon(const QString &status) {
   };
 
   if (status == "?") {
-    drawGlyph(QColor(108, 117, 125), [&]() {
-      painter.drawLine(8, 5, 8, 7);
-      painter.drawPoint(8, 11);
+    drawGlyph(QColor(40, 167, 69), [&]() {
+      painter.drawLine(8, 4, 8, 12);
+      painter.drawLine(4, 8, 12, 8);
     });
   } else if (status == "A") {
     drawGlyph(QColor(40, 167, 69), [&]() {

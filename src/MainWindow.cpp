@@ -861,17 +861,17 @@ MainWindow::MainWindow(QWidget *parent)
   auto *rightDock = new QDockWidget(tr("Working Tree"), this);
   rightDock->setObjectName(QStringLiteral("workTreeDock"));
   rightDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
-  auto *rightWidget = new QWidget(this);
-  rightWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-  auto *rightLayout = new QVBoxLayout(rightWidget);
-  rightLayout->setContentsMargins(4, 4, 4, 4);
-  rightLayout->setSpacing(4);
+  m_rightSplitter = new QSplitter(Qt::Vertical, this);
+  m_rightSplitter->setSizePolicy(QSizePolicy::Expanding,
+                                 QSizePolicy::Expanding);
+  m_rightSplitter->setContentsMargins(4, 4, 4, 4);
+  m_rightSplitter->setHandleWidth(6);
 
   auto *unstagedGroup = new QGroupBox(tr("Unstaged Files"), this);
   auto *unstagedLayout = new QVBoxLayout(unstagedGroup);
   unstagedGroup->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
   m_unstagedTree = new FileTreeWidget(QString(), this);
-  m_unstagedTree->setMinimumHeight(120);
+  m_unstagedTree->setMinimumHeight(80);
   connect(m_unstagedTree, &QTreeWidget::customContextMenuRequested, this,
           &MainWindow::showUnstagedContextMenu);
   connect(m_unstagedTree, &QTreeWidget::itemClicked, this,
@@ -889,13 +889,13 @@ MainWindow::MainWindow(QWidget *parent)
       });
 
   unstagedLayout->addWidget(m_unstagedTree);
-  rightLayout->addWidget(unstagedGroup);
+  m_rightSplitter->addWidget(unstagedGroup);
 
   auto *stagedGroup = new QGroupBox(tr("Staged Files"), this);
   auto *stagedLayout = new QVBoxLayout(stagedGroup);
   stagedGroup->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
   m_stagedTree = new FileTreeWidget(QString(), this);
-  m_stagedTree->setMinimumHeight(120);
+  m_stagedTree->setMinimumHeight(80);
   connect(m_stagedTree, &QTreeWidget::customContextMenuRequested, this,
           &MainWindow::showStagedContextMenu);
   connect(m_stagedTree, &QTreeWidget::itemClicked, this,
@@ -911,17 +911,7 @@ MainWindow::MainWindow(QWidget *parent)
       });
 
   stagedLayout->addWidget(m_stagedTree);
-  rightLayout->addWidget(stagedGroup);
-
-  auto *untrackedGroup = new QGroupBox(tr("Untracked Files"), this);
-  auto *untrackedLayout = new QVBoxLayout(untrackedGroup);
-  untrackedGroup->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-  m_untrackedTree = new FileTreeWidget(QString(), this);
-  m_untrackedTree->setMinimumHeight(120);
-  connect(m_untrackedTree, &QTreeWidget::customContextMenuRequested, this,
-          &MainWindow::showUntrackedContextMenu);
-  untrackedLayout->addWidget(m_untrackedTree);
-  rightLayout->addWidget(untrackedGroup);
+  m_rightSplitter->addWidget(stagedGroup);
 
   auto *messageGroup = new QGroupBox(tr("Commit Message"), this);
   auto *messageLayout = new QVBoxLayout(messageGroup);
@@ -948,18 +938,20 @@ MainWindow::MainWindow(QWidget *parent)
   m_commitBody = new QTextEdit(this);
   m_commitBody->setPlaceholderText(tr("Long description"));
   m_commitBody->setAcceptRichText(false);
-  m_commitBody->setMaximumHeight(120);
   messageLayout->addWidget(m_commitBody);
   m_amendCheckBox = new QCheckBox(tr("Amend last commit"), this);
-  messageLayout->addWidget(m_amendCheckBox);
+  m_signCommitCheckBox = new QCheckBox(tr("Sign with GPG"), this);
+  auto *checkboxRow = new QHBoxLayout();
+  checkboxRow->addWidget(m_amendCheckBox);
+  checkboxRow->addWidget(m_signCommitCheckBox);
+  checkboxRow->addStretch();
+  messageLayout->addLayout(checkboxRow);
   m_amendWarningLabel = new QLabel(this);
   m_amendWarningLabel->setWordWrap(true);
   m_amendWarningLabel->setVisible(false);
   m_amendWarningLabel->setStyleSheet(
       QStringLiteral("color: #d98b26; font-size: 9pt;"));
   messageLayout->addWidget(m_amendWarningLabel);
-  m_signCommitCheckBox = new QCheckBox(tr("Sign with GPG"), this);
-  messageLayout->addWidget(m_signCommitCheckBox);
   connect(m_signCommitCheckBox, &QCheckBox::toggled, this,
           &MainWindow::toggleGpgConfig);
   m_commitButton = new QPushButton(tr("Commit"), this);
@@ -970,7 +962,7 @@ MainWindow::MainWindow(QWidget *parent)
   connect(m_commitButton, &QPushButton::clicked, this,
           &MainWindow::onCommitClicked);
   messageLayout->addWidget(m_commitButton);
-  rightLayout->addWidget(messageGroup);
+  m_rightSplitter->addWidget(messageGroup);
 
   m_spellCheckHighlighter = new SpellCheckHighlighter(m_commitBody->document());
   QSettings settings(QLatin1String("GitClientQt"),
@@ -1023,18 +1015,14 @@ MainWindow::MainWindow(QWidget *parent)
           &MainWindow::onCommitFileClicked);
   commitFilesLayout->addWidget(m_commitFilesTree);
   showEmptyCommitFiles();
-  rightLayout->addWidget(commitFilesGroup);
+  m_rightSplitter->addWidget(commitFilesGroup);
 
-  rightLayout->setStretchFactor(unstagedGroup, 2);
-  rightLayout->setStretchFactor(stagedGroup, 2);
-  rightLayout->setStretchFactor(commitFilesGroup, 2);
+  m_rightSplitter->setStretchFactor(0, 3);
+  m_rightSplitter->setStretchFactor(1, 3);
+  m_rightSplitter->setStretchFactor(2, 1);
+  m_rightSplitter->setStretchFactor(3, 3);
 
-  auto *rightScroll = new QScrollArea(this);
-  rightScroll->setWidgetResizable(true);
-  rightScroll->setFrameShape(QFrame::NoFrame);
-  rightScroll->setWidget(rightWidget);
-  rightScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-  rightDock->setWidget(rightScroll);
+  rightDock->setWidget(m_rightSplitter);
   rightDock->setTitleBarWidget(new QWidget(rightDock));
   rightDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
   rightDock->setMinimumWidth(320);
@@ -1811,6 +1799,9 @@ void MainWindow::saveDockAndColumnState(bool includeGeometry) {
   if (m_mainSplitter)
     settings.setValue(QLatin1String("mainWindow/mainSplitterState"),
                       m_mainSplitter->saveState());
+  if (m_rightSplitter)
+    settings.setValue(QLatin1String("mainWindow/rightSplitterState"),
+                      m_rightSplitter->saveState());
 
   if (m_commitTable) {
     QVariantList widths;
@@ -1883,6 +1874,14 @@ bool MainWindow::restoreDockAndColumnState(bool includeGeometry) {
             .toByteArray();
     if (!splitterState.isEmpty())
       m_mainSplitter->restoreState(splitterState);
+  }
+
+  if (m_rightSplitter) {
+    const QByteArray rightState =
+        settings.value(QLatin1String("mainWindow/rightSplitterState"))
+            .toByteArray();
+    if (!rightState.isEmpty())
+      m_rightSplitter->restoreState(rightState);
   }
 
   if (m_diffDock && m_diffDock->isFloating())
@@ -2825,8 +2824,6 @@ void MainWindow::loadWorkingTree() {
     m_unstagedTree->clear();
   if (m_stagedTree)
     m_stagedTree->clear();
-  if (m_untrackedTree)
-    m_untrackedTree->clear();
   if (m_currentPath.isEmpty()) {
     return;
   }
@@ -2900,15 +2897,13 @@ void MainWindow::loadWorkingTree() {
         }
       }
     }
-    m_untrackedTree->addFile(fs.first, fs.second, added, 0);
+    m_unstagedTree->addFile(fs.first, fs.second, added, 0);
   }
 
   if (m_stagedTree)
     m_stagedTree->collapseAll();
   if (m_unstagedTree)
     m_unstagedTree->collapseAll();
-  if (m_untrackedTree)
-    m_untrackedTree->collapseAll();
   updateCommitButton();
   restoreSelectedFiles();
 }

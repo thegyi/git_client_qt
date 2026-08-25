@@ -613,57 +613,6 @@ void MainWindow::showUnstagedContextMenu(const QPoint &pos) {
   }
 }
 
-void MainWindow::showUntrackedContextMenu(const QPoint &pos) {
-  QTreeWidgetItem *item = m_untrackedTree->itemAt(pos);
-  if (!item || m_currentPath.isEmpty())
-    return;
-
-  const bool isFolder = item->childCount() > 0;
-  const QString path = m_untrackedTree->itemPath(item);
-
-  QMenu menu(this);
-  QAction *stageAction =
-      menu.addAction(isFolder ? tr("&Stage folder") : tr("&Stage file"));
-  QAction *ignoreAction = nullptr;
-  if (isFolder)
-    ignoreAction = menu.addAction(tr("&Ignore all files in this folder"));
-  else
-    ignoreAction = menu.addAction(tr("&Ignore"));
-  QAction *cleanAction = menu.addAction(tr("Git &clean"));
-
-  menu.addSeparator();
-  const QString fullPath = m_currentPath + QLatin1Char('/') + path;
-  auto *openFolderAction = menu.addAction(tr("Open Containing &Folder"));
-
-  QAction *selected = menu.exec(m_untrackedTree->mapToGlobal(pos));
-  if (!selected)
-    return;
-
-  if (selected == stageAction) {
-    if (m_gitExecutor->exec(m_currentPath, {"add", path})) {
-      loadWorkingTree();
-    }
-  } else if (selected == ignoreAction) {
-    const QString pattern = isFolder ? path + '/' : path;
-    QFile gitignore(m_currentPath + "/.gitignore");
-    if (gitignore.open(QIODevice::Append | QIODevice::Text)) {
-      QTextStream out(&gitignore);
-      out << pattern << "\n";
-      gitignore.close();
-    }
-    loadWorkingTree();
-  } else if (selected == cleanAction) {
-    if (m_gitExecutor->exec(m_currentPath, {"clean", "-fd", "--", path})) {
-      loadWorkingTree();
-      if (m_diffView)
-        showEmptyDiff();
-    }
-  } else if (selected == openFolderAction) {
-    QDesktopServices::openUrl(
-        QUrl::fromLocalFile(QFileInfo(fullPath).dir().absolutePath()));
-  }
-}
-
 void MainWindow::showRemotesContextMenu(const QPoint &pos) {
   QTreeWidgetItem *item = m_repoPanel->itemAt(pos);
   if (!item || !m_remotesItem)
