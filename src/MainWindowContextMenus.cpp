@@ -152,12 +152,18 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
           QInputDialog::getText(this, tr("Create Branch"), tr("Branch name:"),
                                 QLineEdit::Normal, QString(), &ok);
       if (ok && !newName.isEmpty()) {
-        if (m_gitExecutor->exec(m_currentPath,
-                                {"branch", newName, branchName})) {
+        QString output;
+        if (m_gitExecutor->exec(m_currentPath, {"branch", newName, branchName},
+                                &output)) {
           loadRepository(m_currentPath);
+          statusBar()->showMessage(
+              tr("Created branch %1 from %2").arg(newName, branchName));
         } else {
-          statusBar()->showMessage(tr("Failed to create branch %1 from %2")
-                                       .arg(newName, branchName));
+          statusBar()->showMessage(
+              output.isEmpty() ? tr("Failed to create branch %1 from %2")
+                                     .arg(newName, branchName)
+                               : output,
+              0);
         }
       }
     } else if (selected == renameAction) {
@@ -210,7 +216,7 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
       }
     }
   } else {
-    const QString fullBranchName = item->parent()->text(0) + "/" + branchName;
+    const QString fullBranchName = item->data(0, Qt::UserRole).toString();
     auto *checkoutAction = menu.addAction(tr("Checkout as tracking branch"));
     auto *deleteRemoteAction =
         menu.addAction(tr("Delete remote branch %1").arg(fullBranchName));
@@ -224,14 +230,21 @@ void MainWindow::showBranchContextMenu(const QPoint &pos) {
       bool ok;
       const QString localName = QInputDialog::getText(
           this, tr("Checkout Remote Branch"), tr("Local branch name:"),
-          QLineEdit::Normal, branchName, &ok);
+          QLineEdit::Normal, item->text(0), &ok);
       if (ok && !localName.isEmpty()) {
-        if (m_gitExecutor->exec(
-                m_currentPath, {"checkout", "-b", localName, fullBranchName})) {
+        QString output;
+        if (m_gitExecutor->exec(m_currentPath,
+                                {"checkout", "-b", localName, fullBranchName},
+                                &output)) {
           loadRepository(m_currentPath);
-        } else {
           statusBar()->showMessage(
-              tr("Failed to checkout %1 as %2").arg(fullBranchName, localName));
+              tr("Checked out %1 as %2").arg(fullBranchName, localName));
+        } else {
+          statusBar()->showMessage(output.isEmpty()
+                                       ? tr("Failed to checkout %1 as %2")
+                                             .arg(fullBranchName, localName)
+                                       : output,
+                                   0);
         }
       }
     } else if (selected == deleteRemoteAction) {

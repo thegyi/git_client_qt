@@ -2103,20 +2103,36 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
   m_remoteBranchesItem =
       new QTreeWidgetItem(m_repoPanel, {tr("Remote Branches")});
   QMap<QString, QTreeWidgetItem *> remoteGroups;
-  for (const QString &branch : m_gitExecutor->run(
+
+  for (const QString &remote : m_gitExecutor->run(path, {"remote"}))
+    m_gitExecutor->exec(path, {"remote", "prune", remote});
+
+  for (const QString &line : m_gitExecutor->run(
            path, {"branch", "-r", "--format=%(refname:short)"})) {
-    const QString remote = branch.section('/', 0, 0);
-    const QString branchName = branch.section('/', 1);
-    if (branchName.isEmpty() || branchName == "HEAD") {
+    const QString fullBranch = line.trimmed();
+    if (fullBranch.isEmpty() || fullBranch == QLatin1String("HEAD") ||
+        fullBranch.contains(QLatin1String(" -> ")))
       continue;
-    }
+
+    const bool hasRemotesPrefix =
+        fullBranch.startsWith(QLatin1String("remotes/"));
+    const QString remote = hasRemotesPrefix
+                               ? fullBranch.section(QLatin1Char('/'), 1, 1)
+                               : fullBranch.section(QLatin1Char('/'), 0, 0);
+    const QString branchName = hasRemotesPrefix
+                                   ? fullBranch.section(QLatin1Char('/'), 2)
+                                   : fullBranch.section(QLatin1Char('/'), 1);
+    if (branchName.isEmpty())
+      continue;
+
     QTreeWidgetItem *remoteItem = remoteGroups.value(remote);
     if (!remoteItem) {
       remoteItem =
           new QTreeWidgetItem(m_remoteBranchesItem, QStringList{remote});
       remoteGroups.insert(remote, remoteItem);
     }
-    new QTreeWidgetItem(remoteItem, QStringList{branchName});
+    auto *branchItem = new QTreeWidgetItem(remoteItem, QStringList{branchName});
+    branchItem->setData(0, Qt::UserRole, fullBranch);
   }
   for (auto it = remoteGroups.begin(); it != remoteGroups.end(); ++it) {
     it.value()->setExpanded(true);
