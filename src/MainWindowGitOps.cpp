@@ -99,6 +99,15 @@ bool MainWindow::performPush(const QStringList &extraArgs) {
 
   progress.exec();
 
+  if (m_commandLogEdit) {
+    m_commandLogEdit->append(tr("> %1 (exit %2)")
+                                 .arg(args.join(QLatin1Char(' ')))
+                                 .arg(canceled ? -1 : p.exitCode()));
+    if (!output.isEmpty())
+      m_commandLogEdit->append(output);
+    m_commandLogEdit->append(QString());
+  }
+
   if (canceled) {
     statusBar()->showMessage(tr("Push canceled"));
     return false;
