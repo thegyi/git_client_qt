@@ -75,6 +75,7 @@
 #include <QTreeWidgetItem>
 #include <QUrl>
 #include <QVector>
+#include <QtConcurrent>
 
 #include <QDateTime>
 #include <QDialog>
@@ -162,6 +163,25 @@ MainWindow::MainWindow(QWidget *parent)
     if (!m_currentPath.isEmpty() && repositoryStateChanged())
       loadRepository(m_currentPath);
   });
+
+  connect(&m_remoteTagsWatcher,
+          &QFutureWatcher<QPair<bool, QSet<QString>>>::finished, this,
+          [this]() {
+            if (m_remoteTagsPath != m_currentPath || !m_tagsItem)
+              return;
+            const auto res = m_remoteTagsWatcher.result();
+            if (!res.first)
+              return;
+            const QSet<QString> remoteTags = res.second;
+            for (int i = 0; i < m_tagsItem->childCount(); ++i) {
+              QTreeWidgetItem *item = m_tagsItem->child(i);
+              const QString tag = item->data(0, Qt::UserRole).toString();
+              if (!remoteTags.contains(tag)) {
+                item->setText(0, tag + tr(" (local)"));
+                item->setForeground(0, QColor(160, 160, 160));
+              }
+            }
+          });
 
   m_recentMenu = new QMenu(tr("Recent Repositories"), this);
   m_recentMenu->setIcon(
@@ -1971,6 +1991,29 @@ bool MainWindow::repositoryStateChanged() const {
 void MainWindow::loadRepository(const QString &path, bool updateTab) {
   if (path.isEmpty())
     return;
+  if (m_loadingRepository) {
+    m_pendingRepositoryPath = path;
+    m_pendingRepositoryUpdateTab = updateTab;
+    m_pendingRepositoryRefresh = true;
+    return;
+  }
+  m_loadingRepository = true;
+  struct LoadingGuard {
+    MainWindow *w;
+    ~LoadingGuard() {
+      w->m_loadingRepository = false;
+      if (w->m_pendingRepositoryRefresh) {
+        w->m_pendingRepositoryRefresh = false;
+        MainWindow *win = w;
+        const QString p = w->m_pendingRepositoryPath;
+        const bool u = w->m_pendingRepositoryUpdateTab;
+        QMetaObject::invokeMethod(
+            win, [win, p, u] { win->loadRepository(p, u); },
+            Qt::QueuedConnection);
+      }
+    }
+  };
+  [[maybe_unused]] LoadingGuard loadingGuard{this};
 
   const bool switchingRepo = !m_currentPath.isEmpty() && m_currentPath != path;
   if (switchingRepo) {
@@ -2104,9 +2147,6 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
       new QTreeWidgetItem(m_repoPanel, {tr("Remote Branches")});
   QMap<QString, QTreeWidgetItem *> remoteGroups;
 
-  for (const QString &remote : m_gitExecutor->run(path, {"remote"}))
-    m_gitExecutor->exec(path, {"remote", "prune", remote});
-
   for (const QString &line : m_gitExecutor->run(
            path, {"branch", "-r", "--format=%(refname:short)"})) {
     const QString fullBranch = line.trimmed();
@@ -2145,30 +2185,44 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
 
   m_tagsItem = new QTreeWidgetItem(m_repoPanel, {tr("Tags")});
   const QStringList remotes = m_gitExecutor->run(path, {"remote"});
-  QSet<QString> remoteTags;
-  bool canCheckLocal = remotes.isEmpty();
-  for (const QString &remote : remotes) {
-    QString output;
-    if (m_gitExecutor->exec(path, {"ls-remote", "--tags", remote}, &output)) {
-      canCheckLocal = true;
-      for (const QString &line : output.split('\n', Qt::SkipEmptyParts)) {
-        const QString ref = line.section(QLatin1Char('\t'), 1, 1);
-        if (ref.startsWith(QLatin1String("refs/tags/"))) {
-          QString tag = ref.mid(10);
-          if (tag.endsWith(QLatin1String("^{}")))
-            tag.chop(3);
-          remoteTags.insert(tag);
-        }
-      }
-    }
-  }
   for (const QString &tag : m_gitExecutor->run(path, {"tag", "--list"})) {
     auto *tagItem = new QTreeWidgetItem(m_tagsItem, QStringList{tag});
-    if (canCheckLocal && !remoteTags.contains(tag)) {
+    if (remotes.isEmpty()) {
       tagItem->setText(0, tag + tr(" (local)"));
       tagItem->setForeground(0, QColor(160, 160, 160));
     }
     tagItem->setData(0, Qt::UserRole, tag);
+  }
+  if (!remotes.isEmpty()) {
+    m_remoteTagsPath = path;
+    m_remoteTagsWatcher.setFuture(
+        QtConcurrent::run([path, remotes]() -> QPair<bool, QSet<QString>> {
+          QSet<QString> remoteTags;
+          bool ok = false;
+          for (const QString &remote : remotes) {
+            QProcess p;
+            p.start(QStringLiteral("git"),
+                    QStringList{QStringLiteral("-C"), path,
+                                QStringLiteral("ls-remote"),
+                                QStringLiteral("--tags"), remote});
+            if (p.waitForFinished(15000) && p.exitCode() == 0) {
+              ok = true;
+              const QString output =
+                  QString::fromLocal8Bit(p.readAllStandardOutput());
+              for (const QString &line :
+                   output.split('\n', Qt::SkipEmptyParts)) {
+                const QString ref = line.section(QLatin1Char('\t'), 1, 1);
+                if (ref.startsWith(QLatin1String("refs/tags/"))) {
+                  QString tag = ref.mid(10);
+                  if (tag.endsWith(QLatin1String("^{}")))
+                    tag.chop(3);
+                  remoteTags.insert(tag);
+                }
+              }
+            }
+          }
+          return {ok, remoteTags};
+        }));
   }
   m_tagsItem->setExpanded(true);
 
@@ -2285,17 +2339,17 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
 
   int graphColumnWidth = 0;
 
-  QProcess p;
-  p.start("git",
-          QStringList{"-C", path} +
-              QStringList{"log", "--branches", "--tags", "--remotes", "--graph",
-                          "--source", "--date-order",
-                          "--date=format:%Y-%m-%d %H:%M:%S",
-                          "--pretty=format:%x1f%H%x1f%h%x1f%an%x1f%ae%x1f%ad%"
-                          "x1f%ar%x1f%s%x1f%b%x1f%S%x1f%P%x1f%G?%x1e"});
-  if (p.waitForFinished(10000) && p.exitCode() == 0) {
-    const QString output =
-        QString::fromLocal8Bit(p.readAllStandardOutput().trimmed());
+  const QByteArray logOutput = m_gitExecutor->raw(
+      path, {QStringLiteral("log"), QStringLiteral("--branches"),
+             QStringLiteral("--tags"), QStringLiteral("--remotes"),
+             QStringLiteral("--graph"), QStringLiteral("--source"),
+             QStringLiteral("--date-order"),
+             QStringLiteral("--date=format:%Y-%m-%d %H:%M:%S"),
+             QStringLiteral("--pretty=format:%x1f%H%x1f%h%x1f%an%x1f%ae%"
+                            "x1f%ad%x1f%ar%x1f%s%x1f%b%x1f%S%x1f%P%x1f%G?"
+                            "%x1e")});
+  if (!logOutput.isEmpty()) {
+    const QString output = QString::fromLocal8Bit(logOutput.trimmed());
 
     m_localHeadSha = m_gitExecutor->run(path, {"rev-parse", "HEAD"}).value(0);
     m_remoteBranchName =
@@ -2523,14 +2577,14 @@ void MainWindow::loadRepository(const QString &path, bool updateTab) {
 
     // Populate stats column (additions/deletions per commit)
     QHash<QString, QString> statsMap;
-    QProcess statsProc;
-    statsProc.start("git", QStringList{"-C", path, "log", "--branches",
-                                       "--tags", "--remotes", "--date-order",
-                                       "--format=%H", "--shortstat"});
-    if (statsProc.waitForFinished(10000) && statsProc.exitCode() == 0) {
+    const QByteArray statsOutput = m_gitExecutor->raw(
+        path, {QStringLiteral("log"), QStringLiteral("--branches"),
+               QStringLiteral("--tags"), QStringLiteral("--remotes"),
+               QStringLiteral("--date-order"), QStringLiteral("--format=%H"),
+               QStringLiteral("--shortstat")});
+    if (!statsOutput.isEmpty()) {
       const QStringList statsLines =
-          QString::fromLocal8Bit(statsProc.readAllStandardOutput())
-              .split('\n', Qt::SkipEmptyParts);
+          QString::fromLocal8Bit(statsOutput).split('\n', Qt::SkipEmptyParts);
       for (int i = 0; i < statsLines.size(); ++i) {
         const QString &line = statsLines[i];
         if (line.length() == 40 && !line.contains(QLatin1Char(' '))) {

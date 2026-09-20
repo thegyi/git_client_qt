@@ -9,8 +9,11 @@
 #include "widgets/DiffViewWidget.h"
 #include "widgets/FileTreeWidget.h"
 
+#include <QFutureWatcher>
 #include <QMainWindow>
 #include <QMap>
+#include <QPair>
+#include <QSet>
 #include <QSettings>
 #include <QShortcut>
 #include <QStackedWidget>
@@ -206,6 +209,12 @@ private:
   QSet<QString> m_unpushedShas;
   QSet<QString> m_unpulledShas;
   QString m_lastRepoSignature;
+  QString m_remoteTagsPath;
+  bool m_loadingRepository = false;
+  bool m_pendingRepositoryRefresh = false;
+  QString m_pendingRepositoryPath;
+  bool m_pendingRepositoryUpdateTab = true;
+  QFutureWatcher<QPair<bool, QSet<QString>>> m_remoteTagsWatcher;
   QTableWidget *m_commitTable = nullptr;
   QFileSystemWatcher *m_watcher = nullptr;
   QTimer *m_fsDebounceTimer = nullptr;
